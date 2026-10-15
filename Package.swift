@@ -10,11 +10,12 @@ let package = Package(
         .executable(name: "ProcessFixture", targets: ["ProcessFixture"])
     ],
     targets: [
-        .target(name: "DownloaderCore"),
+        .target(name: "ProcessSupervision"),
+        .target(name: "DownloaderCore", dependencies: ["ProcessSupervision"]),
         .target(name: "ProcessFixtureSupport"),
         .executableTarget(name: "ProcessFixture", dependencies: ["ProcessFixtureSupport", "DownloaderCore"]),
         .executableTarget(name: "MediaDownloaderApp", dependencies: ["DownloaderCore"]),
-        .testTarget(name: "DownloaderCoreTests", dependencies: ["DownloaderCore"])
+        .testTarget(name: "DownloaderCoreTests", dependencies: ["DownloaderCore", "ProcessFixtureSupport"])
     ],
     swiftLanguageModes: [.v6]
 )

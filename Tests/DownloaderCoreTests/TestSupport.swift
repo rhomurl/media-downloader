@@ -67,3 +67,20 @@ actor TestFlag {
     func mark() { marked = true }
     func value() -> Bool { marked }
 }
+
+actor ChildPIDBatch {
+    private var pids: [Int32] = []
+    func accept(_ line: ProcessLine) {
+        if pids.count < 32, let pid = Int32(String(decoding: line.bytes, as: UTF8.self)) {
+            pids.append(pid)
+        }
+    }
+    func values() -> [Int32] { pids }
+    func ready() async throws {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while pids.count < 32 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(pids.count == 32)
+    }
+}

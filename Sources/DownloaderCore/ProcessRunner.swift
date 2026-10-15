@@ -1,16 +1,23 @@
 import Darwin
 import Foundation
+import ProcessSupervision
 
 /// Each invocation owns independent state, so actor reentrancy cannot replace a
 /// running process or redirect cancellation to a different invocation.
 /// `onLine` runs serially and must return promptly: delivery is joined before
 /// this method returns, including cancellation, so no callback outlives the run.
 public actor ProcessRunner: ProcessRunning {
-    public init() { }
+    private let groupInspection: @Sendable (pid_t) -> ProcessGroupInspection
+
+    public init() { groupInspection = inspectSystemProcessGroup }
+
+    init(groupInspection: @escaping @Sendable (pid_t) -> ProcessGroupInspection) {
+        self.groupInspection = groupInspection
+    }
 
     public func run(_ command: ProcessCommand,
                     onLine: @escaping @Sendable (ProcessLine) async -> Void) async throws -> ProcessResult {
-        let run = ProcessInvocation()
+        let run = ProcessInvocation(groupInspection: groupInspection)
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             // One serial consumer. Readers never wait for an asynchronous client.
@@ -28,6 +35,10 @@ public actor ProcessRunner: ProcessRunning {
                 }
             }
             await delivery.value
+            // Unsafe shutdown must never be hidden by a coincident cancellation:
+            // downstream cleanup has to preserve this operation's staging.
+            if case .failure(let failure as ProcessFailure) = result,
+               case .shutdownUnconfirmed = failure { throw failure }
             try Task.checkCancellation()
             return try result.get()
         } onCancel: {
@@ -45,8 +56,11 @@ private final class ProcessInvocation: @unchecked Sendable {
     private var failure: (any Error)?
     private var queuedBytes = 0
     private let maximumQueuedBytes = 32 * 1024 * 1024
+    private let groupInspection: @Sendable (pid_t) -> ProcessGroupInspection
+    private var abandonReaders = false
 
-    init() {
+    init(groupInspection: @escaping @Sendable (pid_t) -> ProcessGroupInspection) {
+        self.groupInspection = groupInspection
         let pair = AsyncStream<ProcessLine>.makeStream(bufferingPolicy: .bufferingOldest(4096))
         events = pair.stream
         continuation = pair.continuation
@@ -85,9 +99,17 @@ private final class ProcessInvocation: @unchecked Sendable {
         var buffer = [UInt8](repeating: 0, count: 4096)
         do {
             while true {
+                if lock.withLock({ abandonReaders }) { return }
+                var readiness = pollfd(fd: fd, events: Int16(POLLIN | POLLHUP | POLLERR), revents: 0)
+                let ready = poll(&readiness, 1, 100)
+                if ready < 0 {
+                    if errno == EINTR { continue }
+                    throw ProcessFailure.read(errno)
+                }
+                if ready == 0 { continue }
                 let count = Darwin.read(fd, &buffer, buffer.count)
                 if count < 0 {
-                    if errno == EINTR { continue }
+                    if errno == EINTR || errno == EAGAIN { continue }
                     throw ProcessFailure.read(errno)
                 }
                 if count == 0 { break }
@@ -120,6 +142,11 @@ private final class ProcessInvocation: @unchecked Sendable {
                 descriptors[index] = replacement
             }
         }
+        guard fcntl(descriptors[0], F_SETFL, O_NONBLOCK) == 0 else {
+            let code = errno
+            descriptors.forEach { close($0) }
+            throw ProcessFailure.launch(code)
+        }
         return descriptors
     }
 
@@ -130,6 +157,12 @@ private final class ProcessInvocation: @unchecked Sendable {
               !([command.executable.path] + command.arguments).contains(where: { $0.utf8.contains(0) }),
               !command.environment.contains(where: { $0.key.isEmpty || $0.key.contains("=") || $0.key.utf8.contains(0) || $0.value.utf8.contains(0) })
         else { throw ProcessFailure.launch(EINVAL) }
+
+        // Reserve bounded bookkeeping before creating any child. An unsafe run
+        // can transfer this slot to the single nonblocking background reaper.
+        guard let reservation = ProcessReaper.shared.reserve() else { throw ProcessFailure.launch(EAGAIN) }
+        var handedToReaper = false
+        defer { if !handedToReaper { ProcessReaper.shared.release(reservation) } }
 
         var out = try makePipe()
         var err: [Int32]
@@ -198,37 +231,146 @@ private final class ProcessInvocation: @unchecked Sendable {
         let clock = ContinuousClock()
         let deadline = command.timeout.map { clock.now + $0 }
         var terminationStarted: ContinuousClock.Instant?
+        var unsafeShutdown: Int32?
+        var signalFailure: Int32?
         while true {
             var info = siginfo_t()
             let observed = waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT)
-            if observed < 0 && errno != EINTR { stop(ProcessFailure.read(errno)) }
+            if observed < 0 && errno != EINTR {
+                // Another reaper or an unexpected wait failure invalidates the
+                // ownership evidence. Never send another group signal here.
+                unsafeShutdown = errno
+                break
+            }
             if observed == 0 && info.si_pid == pid && terminationStarted == nil {
                 // Keep the leader waitable until the FINAL group signal. This
                 // prevents pgid reuse, including when an orphan holds the pipes.
                 // A naturally completed leader grants no grace to residual work.
-                kill(-pid, SIGKILL)
+                if kill(-pid, SIGKILL) < 0 && errno != ESRCH { signalFailure = errno }
                 break
             }
             if let deadline, clock.now >= deadline { stop(ProcessFailure.timeout) }
             if error != nil && terminationStarted == nil {
-                kill(-pid, SIGTERM)
+                if kill(-pid, SIGTERM) < 0 && errno != ESRCH {
+                    signalFailure = errno
+                    break
+                }
                 terminationStarted = clock.now
             }
             if let terminationStarted, clock.now - terminationStarted >= .seconds(2) {
-                kill(-pid, SIGKILL)
+                if kill(-pid, SIGKILL) < 0 && errno != ESRCH { signalFailure = errno }
                 break
             }
             // A short blocking wait belongs to this dispatch worker, not an actor.
             usleep(5_000)
         }
+        if unsafeShutdown == nil {
+            let inspectionDeadline = clock.now + .seconds(2)
+            inspection: while true {
+                switch groupInspection(pid) {
+                case .quiescent:
+                    break inspection
+                case .failure(let code):
+                    unsafeShutdown = code
+                    break inspection
+                case .live:
+                    // Darwin can report EPERM for an all-zombie group. A
+                    // quiescent inspection supersedes that harmless signal
+                    // result; a live group plus signal failure fails closed.
+                    if let signalFailure {
+                        unsafeShutdown = signalFailure
+                        break inspection
+                    }
+                    if clock.now >= inspectionDeadline {
+                        unsafeShutdown = ETIMEDOUT
+                        break inspection
+                    }
+                    // Catch a child fork that was in flight at the first kill.
+                    // The retained leader still prevents PGID reuse here.
+                    if kill(-pid, SIGKILL) < 0 && errno != ESRCH { signalFailure = errno }
+                    usleep(5_000)
+                }
+            }
+        }
+        if unsafeShutdown == nil && readers.wait(timeout: .now() + .seconds(2)) == .timedOut {
+            // A pipe held outside the confirmed group must not hang completion.
+            unsafeShutdown = ETIMEDOUT
+        }
         var status: Int32 = 0
-        var waited: pid_t
-        repeat { waited = waitpid(pid, &status, 0) } while waited < 0 && errno == EINTR
-        if waited < 0 { stop(ProcessFailure.read(errno)) }
+        if unsafeShutdown == nil {
+            var waited: pid_t
+            repeat { waited = waitpid(pid, &status, WNOHANG) } while waited < 0 && errno == EINTR
+            if waited != pid { unsafeShutdown = waited < 0 ? errno : EAGAIN }
+        }
+        if let unsafeShutdown {
+            // Inspection/signaling is finished before releasing ownership.
+            // Readers own their descriptors and exit their bounded polls. The
+            // shared reaper performs no group inspection or signaling.
+            lock.withLock { abandonReaders = true }
+            ProcessReaper.shared.adopt(pid, reservation: reservation)
+            handedToReaper = true
+            readers.wait()
+            throw ProcessFailure.shutdownUnconfirmed(unsafeShutdown)
+        }
         readers.wait()
         if let error { throw error }
         let signal = status & 0x7f
         let exitCode = signal == 0 ? (status >> 8) & 0xff : 128 + signal
         return ProcessResult(exitCode: exitCode)
+    }
+}
+
+
+enum ProcessGroupInspection: Sendable {
+    case quiescent, live, failure(Int32)
+}
+
+private func inspectSystemProcessGroup(_ pid: pid_t) -> ProcessGroupInspection {
+    switch md_group_is_quiescent(pid) {
+    case 1: .quiescent
+    case 0: .live
+    default: .failure(errno == 0 ? EIO : errno)
+    }
+}
+
+/// One fixed-capacity registry and timer for all invocations. A failed run never
+/// leaves one indefinitely blocked worker/task behind; exhausted slots prevent
+/// further spawning. No group signal or inspection occurs after adoption.
+final class ProcessReaper: @unchecked Sendable {
+    static let shared = ProcessReaper()
+    private let lock = NSLock()
+    private var reservations: [UUID: pid_t] = [:]
+    private let timer: DispatchSourceTimer
+    private let capacity: Int
+
+    init(capacity: Int = 64) {
+        self.capacity = max(0, capacity)
+        timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "media-downloader.reaper", qos: .utility))
+        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+        timer.setEventHandler { [weak self] in self?.reap() }
+        timer.resume()
+    }
+
+    deinit { timer.cancel() }
+
+    func reserve() -> UUID? {
+        lock.withLock {
+            guard reservations.count < capacity else { return nil }
+            let id = UUID()
+            reservations[id] = 0
+            return id
+        }
+    }
+    func release(_ id: UUID) { _ = lock.withLock { reservations.removeValue(forKey: id) } }
+    func adopt(_ pid: pid_t, reservation: UUID) { lock.withLock { reservations[reservation] = pid } }
+
+    private func reap() {
+        lock.withLock {
+            for (id, pid) in reservations where pid > 0 {
+                var status: Int32 = 0
+                let waited = waitpid(pid, &status, WNOHANG)
+                if waited == pid || (waited < 0 && errno == ECHILD) { reservations.removeValue(forKey: id) }
+            }
+        }
     }
 }

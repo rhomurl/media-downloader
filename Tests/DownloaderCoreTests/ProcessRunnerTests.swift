@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Testing
+import ProcessFixtureSupport
 @testable import DownloaderCore
 
 struct ProcessRunnerTests {
@@ -174,6 +175,103 @@ struct ProcessRunnerTests {
         catch is CancellationError { }
         catch ProcessFailure.timeout { }
         try await TestSupport.assertGone(pid)
+    }
+
+}
+
+@Suite(.serialized)
+struct ClosedOutputGroupTests {
+    @Test func noLiveClosedOutputDescendantsAtNaturalReturn() async throws {
+        for _ in 0..<5 {
+            let pids = ChildPIDBatch()
+            let result = try await ProcessRunner().run(TestSupport.fixtureCommand(["closed-output-group"], timeout: .seconds(15))) {
+                await pids.accept($0)
+            }
+            // Snapshot immediately at the return boundary: no post-return polling.
+            let states = await pids.values().map { fixture_process_status($0) }
+            #expect(result.exitCode == 0)
+            #expect(states.count == 32)
+            #expect(states.allSatisfy { $0 == 0 || $0 == 5 })
+        }
+    }
+    @Test(arguments: [false, true])
+    func noLiveClosedOutputDescendantsAtCancellationOrTimeoutReturn(useTimeout: Bool) async throws {
+        let pids = ChildPIDBatch()
+        let task = Task {
+            try await ProcessRunner().run(TestSupport.fixtureCommand(["closed-output-group", "hold"], timeout: useTimeout ? .seconds(2) : nil)) {
+                await pids.accept($0)
+            }
+        }
+        defer { task.cancel() }
+        try await pids.ready()
+        if !useTimeout { task.cancel() }
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation or timeout")
+        } catch is CancellationError { }
+        catch ProcessFailure.timeout { }
+        let states = await pids.values().map { fixture_process_status($0) }
+        #expect(states.count == 32)
+        #expect(states.allSatisfy { $0 == 0 || $0 == 5 })
+    }
+
+    @Test func supervisionFailureTakesPrecedenceOverCancellation() async throws {
+        let pids = PIDLatch()
+        let release = TestLatch()
+        let runner = ProcessRunner(groupInspection: { _ in .failure(EPERM) })
+        let task = Task {
+            try await runner.run(TestSupport.fixtureCommand(["report-pid"])) { line in
+                await pids.accept(line)
+                await release.wait()
+            }
+        }
+        defer {
+            task.cancel()
+            Task { await release.open() }
+        }
+        _ = try await pids.pid()
+        task.cancel()
+        await release.open()
+        do {
+            _ = try await task.value
+            Issue.record("Expected unsafe-cleanup failure")
+        } catch ProcessFailure.shutdownUnconfirmed(let code) {
+            #expect(code == EPERM)
+        }
+    }
+
+    @Test func unconfirmedLiveInspectionFailsClosedWithinBound() async throws {
+        let runner = ProcessRunner(groupInspection: { _ in .live })
+        let start = ContinuousClock.now
+        do {
+            _ = try await runner.run(TestSupport.fixtureCommand(["exit", "0"])) { _ in }
+            Issue.record("Expected unsafe-cleanup deadline failure")
+        } catch ProcessFailure.shutdownUnconfirmed(let code) {
+            #expect(code == EPERM || code == ETIMEDOUT)
+        }
+        #expect(start.duration(to: .now) < .seconds(4))
+    }
+
+    @Test func leaderRemainsWaitableThroughFinalInspection() async throws {
+        let runner = ProcessRunner(groupInspection: { pid in
+            var info = siginfo_t()
+            let waited = waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT)
+            return waited == 0 && info.si_pid == pid ? .quiescent : .failure(ECHILD)
+        })
+        let result = try await runner.run(TestSupport.fixtureCommand(["exit", "0"])) { _ in }
+        #expect(result.exitCode == 0)
+    }
+
+    @Test func reaperReservationsBoundOutstandingRunsBeforeSpawn() throws {
+        let reaper = ProcessReaper(capacity: 2)
+        let first = try #require(reaper.reserve())
+        let second = try #require(reaper.reserve())
+        #expect(reaper.reserve() == nil)
+        reaper.release(first)
+        let replacement = try #require(reaper.reserve())
+        #expect(reaper.reserve() == nil)
+        reaper.release(second)
+        reaper.release(replacement)
     }
 
 }

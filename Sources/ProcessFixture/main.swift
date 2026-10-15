@@ -58,6 +58,8 @@ case "exit":
     _exit(Int32(args.dropFirst().first ?? "0") ?? 0)
 case "signal":
     raise(SIGTERM)
+case "closed-output-group":
+    fixture_closed_output_group(args.dropFirst().first == "hold" ? 1 : 0)
 case "fork-hold", "orphan-hold":
     fixture_fork_hold(args[0] == "orphan-hold" ? 1 : 0)
 case "echo-arguments":

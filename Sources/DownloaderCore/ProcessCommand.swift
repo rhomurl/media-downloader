@@ -40,11 +40,15 @@ public struct ProcessResult: Sendable {
 
 public enum ProcessFailure: Error, Sendable {
     case launch(Int32), timeout, oversizedLine, read(Int32)
+    /// Shutdown could not be confirmed. Callers MUST preserve owned staging.
+    case shutdownUnconfirmed(Int32)
 }
 
 /// A runner owns process-group shutdown and pipe-reader cleanup before returning
 /// or throwing. Nonzero exits are results; cancellation throws CancellationError
 /// after cleanup, and deadlines follow the same shutdown path before timeout.
+/// `shutdownUnconfirmed` takes precedence over cancellation/timeout and means
+/// cleanup safety is unknown: callers must preserve staging for manual recovery.
 public protocol ProcessRunning: Sendable {
     func run(_ command: ProcessCommand,
              onLine: @escaping @Sendable (ProcessLine) async -> Void) async throws -> ProcessResult
