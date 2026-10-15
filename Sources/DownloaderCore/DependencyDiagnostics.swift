@@ -48,7 +48,7 @@ actor DependencyDiagnostics {
         case .encoders:
             let tokens = textLine.split(whereSeparator: \.isWhitespace)
             if tokens.count >= 2, tokens[0].count == 6, tokens[0].first == "A",
-               ["libmp3lame", "libshine"].contains(tokens[1]) { fields.mp3 = true }
+               tokens[1] == "libmp3lame" { fields.mp3 = true }
         case .muxers:
             let tokens = textLine.split(whereSeparator: \.isWhitespace)
             if tokens.count >= 2, ["E", "DE"].contains(tokens[0]), tokens[1].split(separator: ",").contains("mp4") {

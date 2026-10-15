@@ -78,7 +78,7 @@ problem codes; verbose runtime diagnostics were neither saved nor displayed.
 No URL, browser selection, cookie argument, or actual Brave registry was used.
 
 The check validates executable paths, helper colocation/names, tool identities,
-yt-dlp options, MP3 encoder and MP4 muxer support, Deno's 2.3.0 baseline, and
+yt-dlp options, libmp3lame MP3 encoder and MP4 muxer support, Deno's 2.3.0 baseline, and
 installed yt-dlp's discovery of both EJS and the explicitly selected Deno. The
 no-URL yt-dlp diagnostic must exit 2 with the exact missing-URL outcome and the
 expected readiness markers. Other nonzero outcomes fail setup. All probes have
@@ -117,3 +117,13 @@ live public or login-required site works, that a YouTube challenge succeeds,
 that browser permissions allow cookie access, or that the application is usable
 from Finder. Live smoke checks, local media integration, GUI workflow checks,
 and macOS 14 execution remain outstanding.
+
+Task 4 review correction: the MP3 gate now requires `libmp3lame`, which yt-dlp
+selects explicitly for the app's MP3 conversion command. An FFmpeg build with
+only `libshine` is rejected with `missing-mp3` and nil tools. The new regression
+failed before correction (1 test, 2 failed expectations), then
+`bash scripts/test.sh --filter 'DependencyResolver|DependencyDiagnostics'`
+passed 13 tests across 2 suites. Existing libmp3lame/Deno-baseline success cases
+remain covered. The opt-in local probe was skipped in this focused run; the
+full suite, native build, and actual local readiness results above predate this
+single-predicate correction and were not rerun for it.

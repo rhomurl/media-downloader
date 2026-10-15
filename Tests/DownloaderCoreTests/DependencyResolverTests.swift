@@ -85,6 +85,15 @@ struct DependencyResolverTests {
         #expect(report.problems.contains { $0.code == "helper-directory-mismatch" })
     }
 
+    @Test func libshineAloneCannotSatisfyYTDLPMp3Conversion() async throws {
+        let fixture = try ToolFixture(); defer { fixture.remove() }
+        var replies = TestSupport.diagnosticsReady
+        replies[5] = .init(" A....D libshine libshine MP3 (MPEG audio layer 3)")
+        let report = await DependencyResolver(runner: ScriptedRunner(replies: replies)).check(overrides: fixture.overrides)
+        #expect(report.tools == nil)
+        #expect(report.problems.contains { $0.code == "missing-mp3" })
+    }
+
     @Test(arguments: ["wrong-binary", "timeout", "launch", "missing-flags", "missing-mp3", "missing-mp4", "unsupported-deno", "old-deno", "diagnostic-failure", "unknown-diagnostic", "unsafe-version", "nonzero-version"])
     func incompatibleToolsFailClosed(problem: String) async throws {
         let fixture = try ToolFixture(); defer { fixture.remove() }
