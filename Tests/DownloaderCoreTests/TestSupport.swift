@@ -92,3 +92,48 @@ actor ChildPIDBatch {
         #expect(pids.count == 32)
     }
 }
+
+struct ToolFixture {
+    let directory: URL
+    let overrides: [String: URL]
+    init() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("md-tools-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        var paths: [String: URL] = [:]
+        for name in ["yt-dlp", "ffmpeg", "ffprobe", "deno"] {
+            let path = directory.appendingPathComponent(name)
+            try Data("fixture".utf8).write(to: path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+            paths[name] = path
+        }
+        overrides = paths
+    }
+    func remove() { try? FileManager.default.removeItem(at: directory) }
+}
+
+extension TestSupport {
+    static let dependencyFlags = """
+    --ignore-config --no-plugin-dirs --no-remote-components --no-js-runtimes --js-runtimes
+    --ffmpeg-location --verbose --simulate --no-playlist --socket-timeout --retries
+    --fragment-retries --color --dump-single-json --skip-download --flat-playlist
+    --playlist-items --no-simulate --newline --progress --progress-delta --progress-template
+    --print --no-overwrites --no-post-overwrites --output --format --merge-output-format
+    --remux-video --extract-audio --audio-format --audio-quality --cookies-from-browser
+    """
+    static let diagnostic = """
+    [debug] Optional libraries: certifi-2026.1.1, yt_dlp_ejs-0.8.0
+    [debug] JS runtimes: deno-2.9.7
+    yt-dlp: error: You must provide at least one URL.
+    """
+    static var diagnosticsReady: [ScriptedReply] {
+        [.init("2026.08.19"), .init("ffmpeg version 6.1 Copyright synthetic"),
+         .init("ffprobe version 6.1 Copyright synthetic"), .init("deno 2.9.7 (stable, release, aarch64-apple-darwin)"),
+         .init(dependencyFlags), .init(" A....D libmp3lame libmp3lame MP3 (MPEG audio layer 3)"),
+         .init("  E mp4             MP4 (MPEG-4 Part 14)"), .init(diagnostic, exitCode: 2, stream: .stderr)]
+    }
+    static var diagnosticsWithoutEJS: [ScriptedReply] {
+        var replies = diagnosticsReady
+        replies[7] = .init("[debug] Optional libraries: certifi-2026.1.1\n[debug] JS runtimes: deno-2.9.7\nyt-dlp: error: You must provide at least one URL.", exitCode: 2, stream: .stderr)
+        return replies
+    }
+}
