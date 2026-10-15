@@ -240,7 +240,7 @@ User-requested auth refinement: add `braveProfileID: String?` to `PreviewRequest
 }
 @Test func estimatedProgressDoesNotRequireAnExactTotal() {
     let line = ProcessLine(stream: .stderr,
-        bytes: Data(#"MD_DOWNLOAD:{"status":"downloading","downloaded_bytes":50,"total_bytes_estimate":100}"#.utf8))
+        bytes: Data(#"MD_DOWNLOAD:{"progress":{"status":"downloading","downloaded_bytes":50,"total_bytes_estimate":100},"stream_id":"137"}"#.utf8))
     guard case .download(let value) = YTDLPEventDecoder.decode(line) else {
         Issue.record("Expected progress event"); return
     }
@@ -258,11 +258,13 @@ Preview adds `--dump-single-json --skip-download --flat-playlist --playlist-end 
 Download adds `--no-simulate --newline --progress --progress-delta 0.2`, the following machine-readable templates, `--no-overwrites --no-post-overwrites`, and an absolute output template under staging:
 
 ```text
---progress-template download:MD_DOWNLOAD:%(progress)j
+--progress-template download:MD_DOWNLOAD:{"progress":%(progress)j,"stream_id":%(info.format_id|"")j}
 --progress-template postprocess:MD_POSTPROCESS:%(progress)j
 --print after_move:MD_FINAL:%(filepath)j
 -o <staging>/media.%(ext)s
 ```
+
+The download envelope gets stream ID from `info.format_id`, not from `progress.info_dict`: the installed upstream template adapter removes `info_dict` from the progress object. The explicit `|""` fallback keeps missing IDs valid JSON (the default literal `NA` is not JSON). Treat absent/empty/`NA` stream IDs as nil. Tests must use this exact envelope shape so stream changes are exercised against the real command contract.
 
 MP4 selector and options:
 
