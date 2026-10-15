@@ -1,7 +1,7 @@
 import Foundation
 @testable import DownloaderCore
 
-enum ScriptedFailure: Sendable { case timeout, launch }
+enum ScriptedFailure: Sendable { case timeout, launch, cancellation, shutdownUnconfirmed(Int32) }
 
 struct ScriptedReply: Sendable {
     let lines: [ProcessLine]
@@ -38,6 +38,8 @@ actor ScriptedRunner: ProcessRunning {
         switch reply.failure {
         case .timeout: throw ProcessFailure.timeout
         case .launch: throw ProcessFailure.launch(2)
+        case .cancellation: throw CancellationError()
+        case .shutdownUnconfirmed(let code): throw ProcessFailure.shutdownUnconfirmed(code)
         case nil: return ProcessResult(exitCode: reply.exitCode)
         }
     }

@@ -137,3 +137,11 @@ extension TestSupport {
         return replies
     }
 }
+
+extension TestSupport {
+    static func temporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("md-test-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        return directory
+    }
+}
