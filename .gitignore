@@ -1,0 +1,18 @@
+.build/
+dist/
+.swiftpm/
+.DS_Store
+
+# Generated media and transfer artifacts
+*.mp4
+*.mp3
+*.m4a
+*.webm
+*.mkv
+*.wav
+*.part
+*.ytdl
+
+# Local diagnostics; never persist credentials or raw tool output
+diagnostics/
+*.log
