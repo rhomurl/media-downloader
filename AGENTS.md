@@ -16,8 +16,10 @@ before changes. Keep their safety contracts intact.
   the user invokes preview or download. Never persist cookie contents.
 - Launch absolute executables with argument arrays; never source shell startup
   scripts. Ignore user configs/plugins and disallow remote component fetching.
-- Never commit credentials, URLs, raw metadata, raw diagnostics, generated media,
-  runtime tools, staging files, or build products.
+- Never commit credentials, real user URLs, live extracted metadata, raw runtime
+  diagnostics, generated media, runtime tools, staging files, or build products.
+  Synthetic metadata/URL fixtures and loopback test URLs are allowed for tests;
+  they must contain no actual account, browser-profile, or private-source data.
 - Fixture, build, and local integration results do not prove live public or
   login-required site support. Describe manual and live checks honestly, including
   skipped checks, tool versions, and permission failures.

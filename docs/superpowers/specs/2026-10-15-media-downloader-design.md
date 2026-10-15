@@ -2,6 +2,8 @@
 
 Date: 2026-10-15. Status: approved by the user on 2026-10-15 ("Looks good to me").
 
+User refinement during implementation: Brave must offer an explicit profile picker. The supplied public test URL is retained only in the ignored execution workspace, not in project documentation.
+
 ## Purpose and success
 
 The user confirmed a personal app for this Mac, supporting MP4 video, MP3 audio, and browser cookies for login-required videos. The goal is to paste a supported URL and obtain a usable local file without entering terminal commands for each download.
@@ -11,10 +13,10 @@ The approved approach uses SwiftUI, external Homebrew tools, one active job, and
 ## User flow
 
 1. Startup checks yt-dlp, FFmpeg, FFprobe, and Deno without accessing browser cookies. A dependency screen explains missing tools and shows resolved paths/versions.
-2. The main window has a URL field, browser selector (`None`, Chrome, Brave, Firefox), and Preview action. Cookie access occurs only when the user invokes preview/download with a browser selected.
+2. The main window has a URL field, browser selector (`None`, Chrome, Brave, Firefox), and Preview action. Selecting Brave exposes a profile picker; the user must choose a profile before cookie-backed preview/download. The picker reads only profile IDs/display names from Brave's local registry, after Brave is selected, without reading cookie stores. Cookie access occurs only when the user invokes preview/download with a browser selected.
 3. Preview shows title and duration when present. Thumbnail is optional; failure to load it does not block downloading. No raw format-ID picker is required.
 4. The user selects MP4 or MP3 and chooses a destination, initially Downloads. Folder-picker cancellation leaves the prior choice intact. Remember destination and output preference locally; cookie use defaults to None on each app launch.
-5. Download reports transfer progress when available and a separate processing phase. Cancel applies during preview, transfer, and processing. Edits to URL/browser invalidate preview; active downloads freeze their inputs.
+5. Download reports transfer progress when available and a separate processing phase. Cancel applies during preview, transfer, and processing. Edits to URL/browser/Brave profile invalidate preview; active downloads freeze their inputs.
 6. Success offers Show in Finder for the actual completed file. Failure offers a readable reason and retry. Retry starts a fresh job; no automatic credential retry or cross-session resume.
 
 ## Output contract
@@ -50,7 +52,7 @@ Create a unique hidden staging directory under the chosen destination, keeping f
 
 Publish to a readable title sanitized by the app, capped at 120 UTF-8 bytes, plus a full job UUID and the validated extension. Remove control characters and path separators; use `video` when the sanitized title is empty. Never overwrite an existing file. Delete only the owned staging directory after children stop; a crash may leave a directory to clean manually in v1. Never scan/delete unrelated `.part` files.
 
-No cookie export/import or cookie-content persistence in v1. Browser access is opt-in for the operation. Do not request Full Disk Access as part of normal setup. Do not persist URLs, raw metadata, titles, or raw stderr in diagnostic files. Bounded transient diagnostics must be redacted before display/copying; no verbose traffic/page dumps. Keep unknown error messages generic when safe redaction cannot be established.
+No cookie export/import or cookie-content persistence in v1. Browser access is opt-in for the operation. Brave profile selection is held only in memory and resets on launch; do not log profile registry contents, names, or cookie paths. Do not request Full Disk Access as part of normal setup. Do not persist URLs, raw metadata, titles, or raw stderr in diagnostic files. Bounded transient diagnostics must be redacted before display/copying; no verbose traffic/page dumps. Keep unknown error messages generic when safe redaction cannot be established.
 
 ## Error behavior
 
