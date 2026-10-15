@@ -15,7 +15,8 @@ let package = Package(
         .target(name: "ProcessFixtureSupport"),
         .executableTarget(name: "ProcessFixture", dependencies: ["ProcessFixtureSupport", "DownloaderCore"]),
         .executableTarget(name: "MediaDownloaderApp", dependencies: ["DownloaderCore"]),
-        .testTarget(name: "DownloaderCoreTests", dependencies: ["DownloaderCore", "ProcessFixtureSupport"])
+        .testTarget(name: "DownloaderCoreTests", dependencies: ["DownloaderCore", "ProcessFixtureSupport"],
+                    resources: [.copy("Fixtures")])
     ],
     swiftLanguageModes: [.v6]
 )

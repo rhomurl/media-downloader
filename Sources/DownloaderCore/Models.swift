@@ -11,10 +11,12 @@ public enum OutputPreset: String, CaseIterable, Sendable {
 public struct PreviewRequest: Equatable, Sendable {
     public let rawURL: String
     public let browser: CookieBrowser
+    public let braveProfileID: String?
 
-    public init(rawURL: String, browser: CookieBrowser) {
+    public init(rawURL: String, browser: CookieBrowser, braveProfileID: String? = nil) {
         self.rawURL = rawURL
         self.browser = browser
+        self.braveProfileID = braveProfileID
     }
 }
 
@@ -54,6 +56,13 @@ public struct TransferProgress: Equatable, Sendable {
     public let eta: Double?
     public let streamID: String?
 
+    /// Transfer completion applies only to this stream, never to the whole job.
+    public var fractionCompleted: Double? {
+        guard let downloadedBytes, downloadedBytes.isFinite, downloadedBytes >= 0,
+              let totalBytes, totalBytes.isFinite, totalBytes > 0 else { return nil }
+        return min(1, max(0, downloadedBytes / totalBytes))
+    }
+
     public init(downloadedBytes: Double?, totalBytes: Double?, totalIsEstimate: Bool, speed: Double?, eta: Double?, streamID: String?) {
         self.downloadedBytes = downloadedBytes
         self.totalBytes = totalBytes
@@ -72,6 +81,7 @@ public enum JobPhase: Equatable, Sendable {
 public enum AppIssue: Error, Equatable, Sendable {
     case dependency, invalidURL, unsupported, collection, browserAccess, loginRequired
     case unavailable, formatUnavailable, network, destination, processing, timeout, unknown
+    case profileRequired
 }
 
 public struct JobSnapshot: Equatable, Sendable {

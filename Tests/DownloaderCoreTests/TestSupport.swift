@@ -4,6 +4,14 @@ import Testing
 @testable import DownloaderCore
 
 enum TestSupport {
+    static let tools = ResolvedTools(ytdlp: URL(fileURLWithPath: "/synthetic/bin/yt-dlp"),
+                                     ffmpeg: URL(fileURLWithPath: "/synthetic/bin/ffmpeg"),
+                                     ffprobe: URL(fileURLWithPath: "/synthetic/bin/ffprobe"),
+                                     deno: URL(fileURLWithPath: "/synthetic/runtime/deno"))
+
+    static func fixture(_ name: String) throws -> Data {
+        try Data(contentsOf: #require(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures")))
+    }
     static func fixtureCommand(_ args: [String], timeout: Duration? = .seconds(5), limit: Int = 65_536) -> ProcessCommand {
         let path = ProcessInfo.processInfo.environment["MEDIA_DOWNLOADER_FIXTURE_PATH"]
             ?? FileManager.default.currentDirectoryPath + "/.build/debug/ProcessFixture"
