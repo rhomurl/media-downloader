@@ -94,7 +94,7 @@ struct DependencyResolverTests {
         #expect(report.problems.contains { $0.code == "missing-mp3" })
     }
 
-    @Test(arguments: ["wrong-binary", "timeout", "launch", "missing-flags", "missing-mp3", "missing-mp4", "unsupported-deno", "old-deno", "diagnostic-failure", "unknown-diagnostic", "unsafe-version", "nonzero-version"])
+    @Test(arguments: ["wrong-binary", "timeout", "launch", "missing-flags", "missing-fragment-flag", "missing-mp3", "missing-mp4", "unsupported-deno", "old-deno", "diagnostic-failure", "unknown-diagnostic", "unsafe-version", "nonzero-version"])
     func incompatibleToolsFailClosed(problem: String) async throws {
         let fixture = try ToolFixture(); defer { fixture.remove() }
         var replies = TestSupport.diagnosticsReady
@@ -105,6 +105,7 @@ struct DependencyResolverTests {
         case "timeout": replies[0] = .init(failure: .timeout)
         case "launch": replies[0] = .init(failure: .launch)
         case "missing-flags": replies[4] = .init(TestSupport.dependencyFlags.replacingOccurrences(of: "--no-remote-components", with: "--no-remote-components-extra"))
+        case "missing-fragment-flag": replies[4] = .init(TestSupport.dependencyFlags.replacingOccurrences(of: "--abort-on-unavailable-fragments", with: ""))
         case "missing-mp3": replies[5] = .init(" A....D aac AAC")
         case "missing-mp4": replies[6] = .init(" D mp4 MP4")
         case "unsupported-deno": replies[7] = .init(TestSupport.diagnostic.replacingOccurrences(of: "deno-2.9.7", with: "none"), exitCode: 2)
@@ -114,7 +115,7 @@ struct DependencyResolverTests {
         }
         let report = await DependencyResolver(runner: ScriptedRunner(replies: replies)).check(overrides: fixture.overrides)
         #expect(report.tools == nil)
-        let expectedCode = ["old-deno": "unsupported-deno", "diagnostic-failure": "unknown-diagnostic",
+        let expectedCode = ["missing-fragment-flag": "missing-flags", "old-deno": "unsupported-deno", "diagnostic-failure": "unknown-diagnostic",
                             "unsafe-version": "wrong-binary", "nonzero-version": "wrong-binary"][problem] ?? problem
         #expect(report.problems.contains { $0.code == expectedCode })
         #expect(!String(describing: report).contains("secret"))

@@ -25,7 +25,7 @@ public struct DependencyResolver: Sendable {
     static let requiredFlags: Set<String> = [
         "--ignore-config", "--no-plugin-dirs", "--no-remote-components", "--no-js-runtimes", "--js-runtimes",
         "--ffmpeg-location", "--verbose", "--simulate", "--no-playlist", "--socket-timeout", "--retries",
-        "--fragment-retries", "--color", "--dump-single-json", "--skip-download", "--flat-playlist",
+        "--fragment-retries", "--abort-on-unavailable-fragments", "--color", "--dump-single-json", "--skip-download", "--flat-playlist",
         "--playlist-items", "--no-simulate", "--newline", "--progress", "--progress-delta", "--progress-template",
         "--print", "--no-overwrites", "--no-post-overwrites", "--output", "--format", "--merge-output-format",
         "--remux-video", "--extract-audio", "--audio-format", "--audio-quality", "--cookies-from-browser"

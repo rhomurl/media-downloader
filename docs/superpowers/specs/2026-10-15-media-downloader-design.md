@@ -25,7 +25,7 @@ MP4 means H.264 video with AAC audio, selected from source formats and merged/re
 
 MP3 selects an available audio source and converts when needed with FFmpeg, using VBR quality 2. Sources without audio fail clearly. Do not describe conversion as improving source fidelity. No arbitrary local-file conversion or silent output-format fallback.
 
-Probe the resulting artifact with FFprobe before success to check the container/stream contract. A nonzero subprocess exit, missing/empty output, failed verification, or failed final move is a failed job.
+Probe the resulting artifact with FFprobe before success to check the container/stream contract. A nonzero subprocess exit, missing/empty output, failed verification, or failed final move is a failed job. Missing or interrupted media fragments must fail rather than publish a playable partial result.
 
 ## Components and boundaries
 

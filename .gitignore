@@ -16,3 +16,7 @@ dist/
 # Local diagnostics; never persist credentials or raw tool output
 diagnostics/
 *.log
+
+# Python developer harness caches
+__pycache__/
+*.pyc

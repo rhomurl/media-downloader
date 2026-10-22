@@ -74,9 +74,11 @@ struct YTDLPCommandsTests {
         for value in ["--no-simulate", "--newline", "--progress", "--no-overwrites", "--no-post-overwrites", #"download:MD_DOWNLOAD:{"progress":%(progress)j,"stream_id":%(info.format_id|"")j}"#, "postprocess:MD_POSTPROCESS:%(progress)j", "after_move:MD_FINAL:%(filepath)j", "/synthetic/destination/.job-staging/media.%(ext)s", "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]"] {
             #expect(command.arguments.contains(value))
         }
+        #expect(command.arguments.contains("--abort-on-unavailable-fragments"))
         #expect(!command.arguments.contains("--recode-video"))
         #expect(!command.arguments.contains("--ignore-errors"))
         let audio = try builder.download(request, preset: .mp3, staging: staging)
+        #expect(audio.arguments.contains("--abort-on-unavailable-fragments"))
         #expect(Array(audio.arguments.suffix(9)) == ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "2", "--", request.rawURL])
     }
 

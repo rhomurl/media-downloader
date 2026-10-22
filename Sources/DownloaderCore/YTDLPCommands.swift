@@ -17,7 +17,7 @@ public struct YTDLPCommands: Sendable {
         // yt-dlp placeholders. Only our fixed basename is a format template.
         let directory = staging.path.replacingOccurrences(of: "%", with: "%%")
         var arguments = try common(request) + [
-            "--no-simulate", "--newline", "--progress", "--progress-delta", "0.2",
+            "--abort-on-unavailable-fragments", "--no-simulate", "--newline", "--progress", "--progress-delta", "0.2",
             "--progress-template", #"download:MD_DOWNLOAD:{"progress":%(progress)j,"stream_id":%(info.format_id|"")j}"#,
             "--progress-template", "postprocess:MD_POSTPROCESS:%(progress)j",
             "--print", "after_move:MD_FINAL:%(filepath)j", "--no-overwrites", "--no-post-overwrites",
