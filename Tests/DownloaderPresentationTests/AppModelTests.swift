@@ -50,12 +50,16 @@ import DownloaderCore
         await h.model.shutdown()
     }
     @Test func staleProfileLoadCannotReselectAfterSwitchingAway() async {
-        let profiles = SyntheticProfiles(hold: true); let h = Harness(profiles: profiles)
+        let profiles = SyntheticProfiles(); let h = Harness(profiles: profiles)
         h.model.browser = .brave
-        await eventually { await profiles.calls == 1 }
+        await eventually { h.model.braveProfiles.count == 2 && !h.model.isLoadingProfiles }
+        h.model.braveProfileID = "Profile 4"
+        await profiles.holdNextRefresh()
+        let refresh = Task { await h.model.refreshBraveProfiles() }
+        await profiles.waitForHeldRefresh()
         h.model.browser = .none
         await profiles.release()
-        await eventually { !h.model.isLoadingProfiles }
+        await refresh.value
         #expect(h.model.braveProfiles.isEmpty && h.model.braveProfileID == nil)
         await h.model.shutdown()
     }
@@ -265,11 +269,22 @@ import DownloaderCore
 }
 private actor SyntheticProfiles: BraveProfileProviding {
     var calls = 0; var hold: Bool; var continuation: CheckedContinuation<Void, Never>?
+    private var heldRefreshWaiter: CheckedContinuation<Void, Never>?
     init(hold: Bool = false) { self.hold = hold }
     func profiles() async throws -> [BraveProfile] {
         calls += 1
-        if hold { await withCheckedContinuation { continuation = $0 } }
+        if hold {
+            await withCheckedContinuation {
+                continuation = $0
+                heldRefreshWaiter?.resume(); heldRefreshWaiter = nil
+            }
+        }
         return [.init(id: "Default", name: "Personal synthetic"), .init(id: "Profile 4", name: "Work synthetic")]
+    }
+    func holdNextRefresh() { hold = true }
+    func waitForHeldRefresh() async {
+        guard continuation == nil else { return }
+        await withCheckedContinuation { heldRefreshWaiter = $0 }
     }
     func release() { hold = false; continuation?.resume(); continuation = nil }
 }
