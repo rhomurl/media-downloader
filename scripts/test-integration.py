@@ -119,6 +119,32 @@ time.sleep(60)
                 import shutil
                 shutil.rmtree(root)
 
+    def test_uncertainty_first_discovered_in_final_live_lookup_retains_root(self):
+        # No process/socket is created. Keep the real live()/current() behavior;
+        # inspection first becomes uncertain only inside the final predicate.
+        process = mock.Mock(returncode=0)
+        process.communicate.return_value = (b"", None)
+        tree = integration._OwnedDriverTree.__new__(integration._OwnedDriverTree)
+        tree.process = process
+        tree.known = {123: ((123, 1, 0, 501), 1)}
+        tree.uncertain = False
+        tree.observe = mock.Mock()
+        tree.stop = mock.Mock()
+        def unavailable_at_final_lookup(pid):
+            self.assertFalse(tree.uncertain)
+            tree.uncertain = True
+            return None
+        tree.info = mock.Mock(side_effect=unavailable_at_final_lookup)
+        fixture = mock.Mock()
+        with mock.patch.object(integration.subprocess, "Popen", return_value=process), \
+             mock.patch.object(integration, "_OwnedDriverTree", return_value=tree):
+            result = integration.run_test_driver(["/synthetic/driver"], fixture=fixture)
+        self.assertEqual(result.returncode, 0)
+        tree.info.assert_called_once_with(123)
+        self.assertTrue(tree.uncertain)
+        fixture.retain_root.assert_called_once_with()
+        tree.stop.assert_called_once_with()
+
     def test_unjoinable_http_worker_retains_root(self):
         fixture = SyntheticFixture({})
         root = fixture.root

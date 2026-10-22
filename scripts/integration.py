@@ -429,7 +429,8 @@ def run_test_driver(arguments, *, fixture, timeout=240, **kwargs):
             except subprocess.TimeoutExpired:
                 continue
         tree.observe()
-        if process.returncode != 0 or tree.uncertain or tree.live():
+        remaining_live = tree.live()
+        if process.returncode != 0 or tree.uncertain or remaining_live:
             fixture.retain_root()
             tree.stop()
         return subprocess.CompletedProcess(arguments, process.returncode, output)
