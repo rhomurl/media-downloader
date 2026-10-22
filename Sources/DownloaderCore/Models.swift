@@ -82,6 +82,8 @@ public enum AppIssue: Error, Equatable, Sendable {
     case dependency, invalidURL, unsupported, collection, browserAccess, loginRequired
     case unavailable, formatUnavailable, network, destination, processing, timeout, unknown
     case profileRequired
+    /// Process descendants could not be proven stopped; blocks this app session.
+    case shutdownUnconfirmed
 }
 
 public struct JobSnapshot: Equatable, Sendable {

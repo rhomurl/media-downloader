@@ -145,3 +145,70 @@ extension TestSupport {
         return directory
     }
 }
+
+struct CoordinatorHarness: Sendable {
+    let runner: ScriptedRunner
+    let coordinator: JobCoordinator
+    let destination: URL
+    static let request = PreviewRequest(rawURL: "https://video.example.test/watch/synthetic", browser: .none)
+
+    init(runner: ScriptedRunner = ScriptedRunner(), files: JobFiles = JobFiles()) throws {
+        self.runner = runner
+        self.coordinator = JobCoordinator(runner: runner, tools: TestSupport.tools, files: files)
+        self.destination = try TestSupport.temporaryDirectory()
+    }
+    static func readyVideo(request: PreviewRequest = request, files: JobFiles = JobFiles()) async throws -> CoordinatorHarness {
+        let harness = try CoordinatorHarness(files: files)
+        await harness.coordinator.preview(request)
+        _ = try await harness.runner.waitForCommand(at: 0)
+        await harness.runner.resume(.init(lines: [ProcessLine(stream: .stdout, bytes: try TestSupport.fixture("single-video"))]), at: 0)
+        _ = try await harness.waitForPhase(.ready)
+        return harness
+    }
+    func candidate(for command: ProcessCommand, preset: OutputPreset = .mp4) throws -> URL {
+        let index = try #require(command.arguments.firstIndex(of: "-o"))
+        let template = command.arguments[index + 1].replacingOccurrences(of: "%%", with: "%")
+        return URL(fileURLWithPath: template.replacingOccurrences(of: "%(ext)s", with: preset.rawValue))
+    }
+    func finalPathLine(for command: ProcessCommand, preset: OutputPreset = .mp4) throws -> ProcessLine {
+        let path = try candidate(for: command, preset: preset)
+        // Synthetic bytes, not valid media. FFprobe fixture establishes the validation boundary.
+        try Data("synthetic staged artifact".utf8).write(to: path)
+        var bytes = Data("MD_FINAL:".utf8)
+        bytes.append(try JSONEncoder().encode(path.path))
+        return ProcessLine(stream: .stdout, bytes: bytes)
+    }
+    func waitForPhase(_ phase: JobPhase) async throws -> JobSnapshot {
+        try await waitForSnapshot { $0.phase == phase }
+    }
+    func waitForTerminal() async throws -> JobSnapshot {
+        try await waitForSnapshot { [.succeeded, .failed, .cancelled].contains($0.phase) }
+    }
+    func waitForSnapshot(_ predicate: @escaping @Sendable (JobSnapshot) -> Bool) async throws -> JobSnapshot {
+        let stream = await coordinator.updates()
+        return try await withThrowingTaskGroup(of: JobSnapshot.self) { group in
+            group.addTask {
+                for await snapshot in stream where predicate(snapshot) { return snapshot }
+                throw ScriptedWaitFailure.deadline
+            }
+            group.addTask { try await Task.sleep(for: .seconds(5)); throw ScriptedWaitFailure.deadline }
+            defer { group.cancelAll() }
+            let next = try await group.next()
+            return try #require(next)
+        }
+    }
+    func completedFiles() throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: destination, includingPropertiesForKeys: nil)
+            .filter { !$0.lastPathComponent.hasPrefix(".media-downloader-") }
+    }
+    func remove() { try? FileManager.default.removeItem(at: destination) }
+    func finishDownload(preset: OutputPreset = .mp4) async throws -> JobSnapshot {
+        await coordinator.download(preset: preset, destination: destination)
+        let command = try await runner.waitForCommand(at: 1)
+        await runner.resume(.init(lines: [try finalPathLine(for: command, preset: preset)]), at: 1)
+        _ = try await runner.waitForCommand(at: 2)
+        let probe = preset == .mp4 ? "probe-h264-aac" : "probe-mp3"
+        await runner.resume(.init(lines: [ProcessLine(stream: .stdout, bytes: try TestSupport.fixture(probe))]), at: 2)
+        return try await waitForTerminal()
+    }
+}
