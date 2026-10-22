@@ -36,6 +36,13 @@ bash scripts/build-app.sh
 if $integration; then
     python_path="$(command -v python3 || true)"
     [[ -n "$python_path" ]] || { echo 'python3 unavailable; integration requires Python 3.' >&2; exit 1; }
+    if ! "$python_path" scripts/test-integration.py >"$log" 2>&1; then
+        sed -n '/^Ran [0-9]/p; /^FAILED/p' "$log"
+        echo 'Harness lifecycle regressions: FAIL' >&2
+        exit 1
+    fi
+    sed -n '/^Ran [0-9]/p' "$log"
+    echo 'Harness lifecycle regressions: PASS'
     "$python_path" scripts/integration.py
 else
     echo 'Loopback integration: NOT RUN; use --integration.'

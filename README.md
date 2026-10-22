@@ -47,9 +47,13 @@ real-tool suite explicitly. `--integration` additionally generates synthetic
 H.264/AAC HLS media in an owned temporary directory, serves it on an ephemeral
 127.0.0.1 port, and exercises real yt-dlp/FFmpeg/FFprobe through the coordinator.
 It checks MP4/MP3 outputs, unknown-codec policy, and failures without publication.
+The integration branch first runs synthetic harness lifecycle regressions.
 Python 3 is required for this development-only integration harness. No site URLs,
 browser cookies, or external network are needed. Versions and test summaries are
-printed; unrestricted runtime diagnostics remain ephemeral.
+printed; unrestricted runtime diagnostics remain ephemeral. Forced or uncertain
+driver shutdown retains the owned fixture root rather than deleting files while
+work may remain. `python3 scripts/test-integration.py` runs synthetic harness
+timeout/interruption and HTTP-worker cleanup regressions without media tools.
 
 `scripts/test.sh` forwards options to `swift test`, for example
 `bash scripts/test.sh --filter YTDLPCommandsTests`. For standalone Command Line
@@ -73,9 +77,9 @@ bundle; Developer ID signing, notarization, distribution, and public release
 remain outside scope.
 
 Automated tests and a signed local build do not establish Finder launch, GUI
-behavior, browser permissions, or live site support. Manual GUI checks and
-user-selected public/login-required smoke checks remain separate evidence in
-[VERIFICATION.md](docs/VERIFICATION.md). Site availability depends on installed
+behavior, browser permissions, or live site support. Observed native GUI and user-selected public YouTube checks are recorded in
+[VERIFICATION.md](docs/VERIFICATION.md), with their limits. Login-required/browser
+cookie checks remain pending. Site availability depends on installed
 tool versions and the site.
 
 See [the approved design](docs/superpowers/specs/2026-10-15-media-downloader-design.md)

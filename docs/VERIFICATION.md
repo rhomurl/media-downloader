@@ -2,7 +2,8 @@
 
 Current local evidence is recorded below under Task 8 (2026-10-23). Earlier
 sections retain their original observations and limits. Local automated checks
-and bundle signing do not establish GUI usability or live-site support.
+and bundle signing are distinct from the controller GUI/public observations and
+remaining live/browser limits recorded below.
 
 ## Developer setup
 
@@ -183,8 +184,9 @@ H.264/AAC HLS sample using the resolved FFmpeg and the planned command. FFmpeg's
 master manifest declares codecs. The same sample is remuxed into a direct MP4 and
 an audio-only HLS fixture. An ephemeral HTTP server binds only to 127.0.0.1 and
 serves the private generated root. Raw tool output is held transiently; the
-harness prints versions and test summaries, then stops its server and deletes
-its own root. All launches use subprocess argument arrays. No fixture is part
+harness prints versions and test summaries. After a successful driver it closes
+tracked request sockets and joins all HTTP workers before deleting its owned root.
+Forced or uncertain driver outcomes retain the fixture root, as described below. All launches use subprocess argument arrays. No fixture is part
 of the product bundle.
 
 Both presets use the real JobCoordinator, ProcessRunner, yt-dlp, FFmpeg,
@@ -238,24 +240,105 @@ This is a locally assembled personal bundle. Developer ID signing, notarization,
 Gatekeeper distribution behavior, release artifacts, and distribution remain
 unverified and outside the approved v1 scope.
 
-### GUI and live-site checks: pending controller verification
+### Review fixes: harness shutdown and fail-closed retention
 
-No Task 8 implementer check opened the app in Finder or exercised native UI.
-Finder/Launch Services with a minimal PATH, dependency screen, browser default
-None, preview/title layout, folder-picker cancellation, both output actions,
-progress/processing, Cancel/Retry, responsive window, actual Show in Finder, and
-Quit during transfer still require controller observations. Automated core/model
-checks do not replace these native observations.
+The Task 8 review reproduced two outer-harness gaps: an immediate-process timeout
+could leave test-driver descendants alive, including separately owned process
+groups; daemon HTTP workers could survive fixture deletion. Both are now covered
+by `python3 scripts/test-integration.py`, using only synthetic Python processes,
+owned temporary files, and loopback clients.
 
-The importable `LoopbackFixture` exposes `url`, `slow_url`, `long_title_url`,
+Before fixes, six synthetic tests produced five behavioral failures: timeout and
+interruption descendants survived; a nonzero driver deleted the root; a partial
+HTTP request reader and a blocked response writer survived fixture close. Those
+regressions explicitly cleaned up their known synthetic processes/sockets. After
+fixes, nine tests pass (10.117 seconds), adding actual SIGTERM interruption,
+incomplete-inspection, and unjoinable-worker retention checks. The existing
+`verify.sh --integration` branch now runs these Python regressions before real
+media integration; default verification still has no Python requirement. This
+shell wiring passed `bash -n`; the final combined command is controller-owned.
+The affected real harness independently passed all five Swift integration
+functions / ten cases (2.414 seconds) after the shutdown fixes.
+
+The driver supervisor inspects only children of already known owned PIDs through
+macOS libproc. It records PID/start-time/UID identity, follows observed ancestry
+across separate process groups, stops observed descendants individually after
+identity checks, and waits for the immediate driver plus observed descendant
+quiescence. Only known owned processes may be signalled; it does not scan all
+system processes. Timeout, interruption (including SIGTERM), nonzero/crashed
+exit, incomplete inspection, unexpected ancestry/reparenting, or a remaining
+observed descendant latches retention and reports shutdown/cleanup unconfirmed.
+There is no automatic temporary-directory finalizer that can bypass retention.
+
+This is bounded ancestry observation, not containment of arbitrary fast
+fork/daemonization. macOS does not provide the old kqueue child-tracking flags;
+a child can reparent between snapshots. Even if every observed process stops,
+a forced/uncertain outcome retains its root. Normal driver exit zero with the
+successful coordinator checks may clean after HTTP shutdown. This narrowed
+policy was explicitly approved during review.
+
+HTTP workers and accepted sockets are tracked explicitly. Close stops accepts,
+releases the slow-segment gate, shuts down request sockets to wake blocked reads
+and writes, and joins every tracked worker against a bounded deadline. If any
+worker remains, the owned root is retained and the error is reported. Ordinary
+successful checks still clean up. Overall integration PASS is printed only after
+fixture teardown succeeds. The Python harness fixes do not modify the app bundle.
+
+### Controller GUI/public observations and remaining limits
+
+The controller observed the final Task 8 local bundle on this Mac on 2026-10-23.
+These are native observations, separate from the implementer's automated checks:
+
+- Double-click launch in Finder reached dependency readiness with browser None,
+  empty URL, and Downloads destination. The inherited PATH was not deliberately
+  reduced, so minimal-PATH launch remains unverified.
+- Native Choose Folder opened; Cancel preserved Downloads, and choosing an
+  isolated ignored output directory updated the shown destination. An initial
+  stale automation binding/control-index issue resolved after refresh and was
+  not a product defect.
+- Loopback preview showed a two-second duration, synthetic title, and fallback
+  film thumbnail. Native MP4 and MP3 actions completed. Show in Finder selected
+  the actual UUID-named MP4 output, and Finder showed H.264/AAC, 320×180, two
+  seconds. FFprobe confirmed both local outputs below.
+- A long synthetic title with percent, emoji, and slash characters truncated
+  cleanly across three lines while accessibility retained its full label and
+  controls remained readable. VoiceOver and dynamic type were not exercised.
+- A controlled slow segment showed indeterminate downloading and working Cancel;
+  URL/browser/preset/folder/check/download inputs were disabled during transfer.
+  Cancel returned Cancelled; the recorded owned yt-dlp PID/group was absent and
+  owned staging count was zero afterward.
+- Preview/retry after Cancel worked. Cmd-Q during another controlled transfer
+  quit the app; inspection found neither the recorded app/child PIDs nor the
+  recorded process group, and owned staging count was zero. No FFmpeg or Deno
+  descendant was active in that GUI case; their shutdown remains automated
+  process-fixture evidence. Transfer responsiveness was observed.
+- Relaunch cleared URL and browser selection back to None while retaining the
+  output/destination preferences. Destination was restored to Downloads and the
+  app left idle. Successful two-second transfers completed between observations;
+  processing/validation phases were not visually captured.
+
+The user-selected public YouTube input successfully previewed and completed both
+MP3 and MP4 through the native UI with browser None. Controller FFprobe summaries
+contain only codec/size/duration fields, without the source URL or title:
+
+| Source/preset | Bytes | Duration (seconds) | Verified container/streams |
+| --- | ---: | ---: | --- |
+| Public YouTube MP3 | 18,752,732 | 812.628771 | MP3; MP3 audio, no video |
+| Public YouTube MP4 | 130,909,408 | 812.675193 | MP4 family; H.264 video + AAC audio |
+| Loopback MP3 | 11,487 | 2.043356 | MP3; MP3 audio, no video |
+| Loopback MP4 | 35,251 | 2.043356 | MP4 family; H.264 video + AAC audio |
+
+These observations apply to the selected public video and installed versions
+listed above; they do not establish general site availability. Outputs remain
+in the ignored controller output directory. No actual Brave registry, browser
+cookies/profile selection, login-required extraction, or browser/Keychain
+permission flow was exercised. Those private/cookie checks remain pending.
+Minimal inherited PATH, visible processing/validation, active GUI FFmpeg/Deno
+descendant shutdown, VoiceOver/dynamic type, macOS 14, and Intel remain unverified.
+Developer ID signing, notarization, release, and distribution remain outside scope.
+
+The importable `LoopbackFixture` retains `url`, `slow_url`, `long_title_url`,
 `wait_for_segment(timeout)`, `release_segments()`, and `close()`/context-manager
-cleanup for those checks. The slow master/playlist remain fast; the segment waits
-on an explicit owner-controlled gate. These are developer fixtures only.
-
-No public-site or login-required extraction, browser/Keychain permission prompt,
-real Brave registry enumeration, or cookie access was performed here. Public
-and login-required smoke checks remain pending, and require user-selected inputs
-plus an explicit browser/profile for cookie-backed operations. The controller
-will record permitted site names, versions, preset, outcome, and permission
-failures separately without retaining full URLs, titles, metadata, or diagnostics.
-A supplied public input is kept only in the ignored execution workspace.
+methods for owned developer checks. Its slow master/playlist remain fast; the
+segment waits on an explicit owner-controlled gate. No fixture or test switch
+is embedded in the application.

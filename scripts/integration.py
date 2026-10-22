@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Credential-free, loopback-only real-tool integration; import LoopbackFixture for GUI checks."""
 import argparse
+import ctypes
+import errno
 import functools
 import http.server
 import os
 from pathlib import Path
 import re
+import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 TOOLS = {"YTDLP": "yt-dlp", "FFMPEG": "ffmpeg", "FFPROBE": "ffprobe", "DENO": "deno"}
@@ -92,11 +98,68 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
             super().do_GET()
 
 
+class ShutdownUnconfirmed(RuntimeError):
+    def __init__(self):
+        super().__init__("Integration shutdown/cleanup unconfirmed; owned fixture files retained.")
+
+
 class FixtureHTTPServer(http.server.ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         self.segment_requested = threading.Event()
         self.segment_gate = threading.Event()
+        self._worker_lock = threading.Lock()
+        self._workers = set()
+        self._requests = {}
+        self._closing = False
         super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        # Explicit tracking replaces ThreadingMixIn's daemon-thread exclusion.
+        # A failed bounded join is a retention error, never permission to delete.
+        with self._worker_lock:
+            if self._closing:
+                self.shutdown_request(request)
+                return
+            request.settimeout(5)
+            worker = threading.Thread(target=self._serve_request,
+                                      args=(request, client_address), daemon=True)
+            self._workers.add(worker)
+            self._requests[worker] = request
+            try:
+                worker.start()
+            except BaseException:
+                self._workers.remove(worker)
+                self._requests.pop(worker)
+                self.shutdown_request(request)
+                raise
+
+    def _serve_request(self, request, client_address):
+        try:
+            self.process_request_thread(request, client_address)
+        finally:
+            with self._worker_lock:
+                self._requests.pop(threading.current_thread(), None)
+
+    def server_close(self, timeout=2):
+        self.segment_gate.set()
+        with self._worker_lock:
+            self._closing = True
+            requests = list(self._requests.values())
+            workers = list(self._workers)
+        # shutdown wakes readers and writers even when makefile() owns another
+        # reference to a socket. Closing the listening socket alone cannot do so.
+        for request in requests:
+            try:
+                request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            request.close()
+        http.server.HTTPServer.server_close(self)
+        deadline = time.monotonic() + timeout
+        for worker in workers:
+            worker.join(max(0, deadline - time.monotonic()))
+        if any(worker.is_alive() for worker in workers):
+            raise ShutdownUnconfirmed()
 
     def handle_error(self, *_):
         pass  # Expected socket interruption; never dump request diagnostics.
@@ -109,15 +172,16 @@ class LoopbackFixture:
     No fixture, server, or runtime binary is embedded in the application bundle.
     """
     def __init__(self, tools):
-        self._temporary = tempfile.TemporaryDirectory(prefix="media-downloader-integration-")
-        self.root = Path(self._temporary.name)
+        self.root = Path(tempfile.mkdtemp(prefix="media-downloader-integration-"))
+        # No automatic TemporaryDirectory finalizer may bypass retention.
+        self._retain_root = False
         self.server = None
         self.thread = None
         try:
             self._generate(tools)
             handler = functools.partial(QuietHandler, directory=str(self.root))
             self.server = FixtureHTTPServer(("127.0.0.1", 0), handler)
-            self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+            self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
             self.thread.start()
             self.base_url = f"http://127.0.0.1:{self.server.server_port}"
             self.url = self.base_url + "/master.m3u8"
@@ -173,21 +237,218 @@ class LoopbackFixture:
         """True after a slow-segment request arrives; useful for GUI observation."""
         return self.server.segment_requested.wait(timeout)
 
+    def retain_root(self):
+        self._retain_root = True
+
     def close(self):
-        if self.server is not None:
-            self.server.segment_gate.set()
-            if self.thread is not None:
-                self.server.shutdown()
-                self.thread.join()
-            self.server.server_close()
-            self.server = None
-        self._temporary.cleanup()
+        try:
+            if self.server is not None:
+                self.server.segment_gate.set()
+                if self.thread is not None and self.thread.ident is not None:
+                    self.server.shutdown()
+                    self.thread.join(2)
+                    if self.thread.is_alive():
+                        raise ShutdownUnconfirmed()
+                self.server.server_close()
+                self.server = None
+        except BaseException:
+            self.retain_root()
+            raise
+        if self._retain_root:
+            raise ShutdownUnconfirmed()
+        if self.root.exists():
+            shutil.rmtree(self.root)
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_):
         self.close()
+
+
+class _BSDInfo(ctypes.Structure):
+    # Darwin proc_bsdinfo from sys/proc_info.h; numeric identity fields only.
+    _fields_ = [(name, ctypes.c_uint32) for name in (
+        "flags", "status", "xstatus", "pid", "ppid", "uid", "gid", "ruid",
+        "rgid", "svuid", "svgid", "reserved")]
+    _fields_ += [("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32)]
+    _fields_ += [(name, ctypes.c_uint32) for name in (
+        "nfiles", "pgid", "jobc", "tdev", "tpgid")]
+    _fields_ += [("nice", ctypes.c_int32), ("start_seconds", ctypes.c_uint64),
+                ("start_microseconds", ctypes.c_uint64)]
+
+
+class _OwnedDriverTree:
+    """Bounded known-PID ancestry tracking, not arbitrary daemon containment.
+
+    Only libproc children of already proven owned PIDs are inspected. Signals
+    require matching PID/start-time/UID identity. Forced outcomes always retain
+    the fixture: snapshots cannot prove absence of fast fork/reparent escapes.
+    """
+    def __init__(self, process):
+        self.process = process
+        self.known = {}
+        self.uncertain = False
+        if sys.platform != "darwin":
+            raise RuntimeError("Owned integration-driver supervision requires macOS.")
+        self.lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        self.lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                         ctypes.c_void_p, ctypes.c_int]
+        self.lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        info = self.info(process.pid)
+        if info is None:
+            self.uncertain = True
+        else:
+            self.known[process.pid] = (self.identity(info), info.ppid)
+
+    @staticmethod
+    def identity(info):
+        return info.pid, info.start_seconds, info.start_microseconds, info.uid
+
+    def info(self, pid):
+        info = _BSDInfo()
+        ctypes.set_errno(0)
+        count = self.lib.proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+        if count == 0 and ctypes.get_errno() == errno.ESRCH:
+            return None
+        if count != ctypes.sizeof(info):
+            self.uncertain = True
+            return None
+        return info
+
+    def current(self, pid):
+        info = self.info(pid)
+        if info is None:
+            return None
+        if self.identity(info) != self.known[pid][0]:
+            self.uncertain = True  # Reused PID must never be signalled.
+            return None
+        if info.status == 5:  # SZOMB: no execution or open readers remain.
+            return None
+        if info.ppid != self.known[pid][1]:
+            self.uncertain = True
+        return info
+
+    def observe(self):
+        pending = list(self.known)
+        visited = set()
+        while pending:
+            pid = pending.pop()
+            if pid in visited or self.current(pid) is None:
+                continue
+            visited.add(pid)
+            children = (ctypes.c_int * 4096)()
+            ctypes.set_errno(0)
+            count = self.lib.proc_listchildpids(pid, children, ctypes.sizeof(children))
+            if count < 0 or count >= 4096 or (count == 0 and ctypes.get_errno() not in (0, errno.ESRCH)):
+                self.uncertain = True
+                continue
+            for child in children[:count]:
+                info = self.info(child)
+                if info is None:
+                    continue
+                if info.ppid != pid or info.uid != os.geteuid():
+                    self.uncertain = True
+                    continue
+                if child not in self.known:
+                    if len(self.known) >= 4096:
+                        self.uncertain = True
+                        continue
+                    self.known[child] = (self.identity(info), pid)
+                pending.append(child)
+
+    def live(self):
+        return [pid for pid in self.known if self.current(pid) is not None]
+
+    def send(self, pid, sig):
+        if self.current(pid) is not None:
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+            except OSError:
+                self.uncertain = True
+
+    def stop(self):
+        # Stop known parents before recursive discovery; separately owned groups
+        # are covered by identities, not an assumption that killpg reaches them.
+        for _ in range(3):
+            self.observe()
+            for pid in list(self.known):
+                self.send(pid, signal.SIGSTOP)
+        for pid in reversed(list(self.known)):
+            self.send(pid, signal.SIGTERM)
+            self.send(pid, signal.SIGCONT)
+        deadline = time.monotonic() + 2
+        while self.live() and time.monotonic() < deadline:
+            self.observe()
+            self.process.poll()  # Reap only our immediate child.
+            time.sleep(0.01)
+        self.observe()
+        for pid in reversed(list(self.known)):
+            self.send(pid, signal.SIGKILL)
+        # Popen owns this unreaped immediate PID even if inspection failed.
+        if self.process.poll() is None:
+            self.process.kill()
+        try:
+            self.process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self.uncertain = True
+        deadline = time.monotonic() + 2
+        while self.live() and time.monotonic() < deadline:
+            self.observe()
+            for pid in self.live():
+                self.send(pid, signal.SIGKILL)
+            time.sleep(0.01)
+        if self.live():
+            self.uncertain = True
+
+
+def run_test_driver(arguments, *, fixture, timeout=240, **kwargs):
+    process = None
+    tree = None
+    old_term = None
+    if threading.current_thread() is threading.main_thread():
+        old_term = signal.getsignal(signal.SIGTERM)
+        def interrupted(*_):
+            raise KeyboardInterrupt()
+        signal.signal(signal.SIGTERM, interrupted)
+    try:
+        process = subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   start_new_session=True, **kwargs)
+        tree = _OwnedDriverTree(process)
+        deadline = time.monotonic() + timeout
+        while True:
+            tree.observe()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(arguments, timeout)
+            try:
+                output, _ = process.communicate(timeout=min(0.05, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        tree.observe()
+        if process.returncode != 0 or tree.uncertain or tree.live():
+            fixture.retain_root()
+            tree.stop()
+        return subprocess.CompletedProcess(arguments, process.returncode, output)
+    except BaseException:
+        fixture.retain_root()
+        if tree is not None:
+            tree.stop()
+        elif process is not None:
+            process.kill()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+        raise
+    finally:
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
+        if old_term is not None:
+            signal.signal(signal.SIGTERM, old_term)
 
 
 def main():
@@ -198,20 +459,19 @@ def main():
         environment = dict(os.environ)
         environment.update({f"MEDIA_DOWNLOADER_{key}_PATH": value for key, value in tools.items()})
         environment["MEDIA_DOWNLOADER_INTEGRATION_URL"] = fixture.url
-        result = subprocess.run(["/bin/bash", str(REPOSITORY / "scripts/test.sh"), "--filter", "RealToolIntegration"],
-                                cwd=REPOSITORY, env=environment, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, timeout=240)
+        result = run_test_driver(["/bin/bash", str(REPOSITORY / "scripts/test.sh"), "--filter", "RealToolIntegration"],
+                                 fixture=fixture, cwd=REPOSITORY, env=environment)
         for line in result.stdout.decode("utf-8", "replace").splitlines():
             if "Test run with" in line:
                 print(line)
-        print(f"Loopback integration: {'PASS' if result.returncode == 0 else 'FAIL'}", flush=True)
-        return result.returncode
+    print(f"Loopback integration: {'PASS' if result.returncode == 0 else 'FAIL'}", flush=True)
+    return result.returncode
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+    except (RuntimeError, OSError, subprocess.TimeoutExpired, KeyboardInterrupt) as error:
         # Timeout/OS messages can include argv or paths; do not emit them.
         print(str(error) if isinstance(error, RuntimeError) else "Integration setup or execution failed.", file=sys.stderr)
         sys.exit(1)
