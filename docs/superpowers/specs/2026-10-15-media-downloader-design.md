@@ -40,9 +40,11 @@ Prefer a Swift package containing a testable core and a macOS executable, plus a
 
 ## State and lifecycle
 
-States: checking dependencies, idle, previewing, ready, downloading, processing, validating, publishing, cancelling, succeeded, failed, cancelled. A new preview clears the previous result. Only the current operation may transition state.
+States: checking dependencies, idle, previewing, ready, downloading, processing, validating, publishing, cancelling, succeeded, failed, cancelled. A new preview clears the previous result. Only the current operation may transition ordinary job state. Inability to confirm shutdown of any owned process, including an older preview, latches a session safety block rather than being discarded as stale metadata.
 
 Cancellation signals the owned process group, escalates after a short bounded grace period, waits for processes/readers to stop, then cleans that job's staging directory. Include FFmpeg and runtime descendants. Quit uses the same shutdown path. Disable cancellation for the brief atomic publication operation so a completed file is not ambiguously reported as cancelled.
+
+If the OS cannot confirm shutdown within bounded supervision, fail with `shutdownUnconfirmed`, retain staging, and refuse further subprocess-starting operations for the app session. Dependency rechecks, preference changes, and coordinator replacement must not bypass this block. Quit remains available; restarting alone does not establish that previous processes stopped.
 
 Do not claim success on transfer percentage or a final-path event alone. Require clean completion, a valid path inside the expected staging directory, a nonempty regular file, successful FFprobe validation, and successful publication.
 
