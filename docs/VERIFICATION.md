@@ -342,3 +342,19 @@ The importable `LoopbackFixture` retains `url`, `slow_url`, `long_title_url`,
 methods for owned developer checks. Its slow master/playlist remain fast; the
 segment waits on an explicit owner-controlled gate. No fixture or test switch
 is embedded in the application.
+
+### Final controller combined verification
+
+On 2026-10-23, `bash scripts/verify.sh --integration` on `dad298c` exited 0:
+146 reported Swift tests across 16 suites passed in 11.574 seconds, with the
+five real-integration functions and one offline-tool function explicitly skipped
+in the default Swift pass. The separately enabled real integration then passed
+five functions / ten cases in 2.644 seconds. Nine Python harness lifecycle
+regressions passed in 10.077 seconds. ProcessFixture build, release bundle
+assembly, and local ad-hoc signature verification passed. Reported versions were
+yt-dlp 2026.08.19, FFmpeg/FFprobe 9.0.2, and Deno 2.9.7.
+
+The idle GUI was closed before rebuilding. This command starts neither browser
+cookie access nor remote-site extraction. Final review status is recorded in
+[implementation decisions](IMPLEMENTATION-NOTES.md); no distribution action is
+implied by these local checks.
