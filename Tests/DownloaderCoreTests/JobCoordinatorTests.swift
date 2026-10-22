@@ -5,6 +5,21 @@ import ProcessFixtureSupport
 @testable import DownloaderCore
 
 struct JobCoordinatorTests {
+    @Test func assignedPreviewIdentityAndRejectedExpectedReadyCannotStartDownload() async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        let expected = UUID()
+        await h.coordinator.preview(CoordinatorHarness.request, operationID: expected)
+        _ = try await h.runner.waitForCommand(at: 0)
+        await h.runner.resume(.init(#"{"id":"synthetic","title":"Synthetic"}"#), at: 0)
+        let ready = try await h.waitForPhase(.ready)
+        #expect(ready.operationID == expected)
+        let rejected = await h.coordinator.download(preset: .mp4, destination: h.destination,
+                                                   previewOperationID: UUID(), operationID: UUID())
+        #expect(!rejected)
+        #expect(await h.runner.commands().count == 1)
+        await h.coordinator.shutdown()
+    }
+
     @Test func validPreviewEmitsLatestSnapshotOnEverySubscription() async throws {
         let h = try await CoordinatorHarness.readyVideo(); defer { h.remove() }
         for _ in 0..<2 {
@@ -83,7 +98,7 @@ struct JobCoordinatorTests {
         _ = try await h.waitForSnapshot { $0.phase == .previewing && $0.operationID != replacingID }
         #expect(await h.runner.commands().count == 1)
         await h.runner.resume(.init(#"{"id":"old","title":"stale"}"#), at: 0)
-        await replace.value; await newest.value
+        _ = await replace.value; _ = await newest.value
         let command = try await h.runner.waitForCommand(at: 1)
         #expect(command.arguments.last == latest.rawURL)
         #expect(command.arguments.contains("brave:Profile 5"))
@@ -105,7 +120,7 @@ struct JobCoordinatorTests {
         }
         _ = try await h.waitForPhase(action == 0 ? .cancelling : .idle)
         await h.runner.resume(.init(), at: 0)
-        await replacement.value; await control.value
+        _ = await replacement.value; await control.value
         #expect(await h.runner.commands().count == 1)
     }
     @Test func finalEventWithFailedExitCannotSucceed() async throws {
@@ -388,7 +403,7 @@ extension JobCoordinatorTests {
         #expect([0, 5].contains(fixture_process_status(pid)))
         #expect(FileManager.default.fileExists(atPath: staging.path))
         await runner.release.signal()
-        await quitting.value
+        _ = await quitting.value
         #expect(try await h.waitFor(.cancelled).phase == .cancelled)
         #expect(!FileManager.default.fileExists(atPath: staging.path))
     }
@@ -522,7 +537,7 @@ extension JobCoordinatorTests {
         try await h.runner.waitForCancellation(at: 0)
         let newID = try await h.waitForPhase(.previewing).operationID
         await h.runner.resume(.init(failure: .shutdownUnconfirmed(13)), at: 0)
-        await replacing.value
+        _ = await replacing.value
         let failed = try await h.waitForTerminal()
         #expect(failed.issue == .shutdownUnconfirmed && failed.operationID == newID)
         #expect(await h.runner.commands().count == 1)

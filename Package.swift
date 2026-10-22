@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "DownloaderCore", targets: ["DownloaderCore"]),
+        .library(name: "DownloaderPresentation", targets: ["DownloaderPresentation"]),
         .executable(name: "MediaDownloader", targets: ["MediaDownloaderApp"]),
         .executable(name: "ProcessFixture", targets: ["ProcessFixture"])
     ],
@@ -14,7 +15,9 @@ let package = Package(
         .target(name: "DownloaderCore", dependencies: ["ProcessSupervision"]),
         .target(name: "ProcessFixtureSupport"),
         .executableTarget(name: "ProcessFixture", dependencies: ["ProcessFixtureSupport", "DownloaderCore"]),
-        .executableTarget(name: "MediaDownloaderApp", dependencies: ["DownloaderCore"]),
+        .target(name: "DownloaderPresentation", dependencies: ["DownloaderCore"]),
+        .executableTarget(name: "MediaDownloaderApp", dependencies: ["DownloaderPresentation"]),
+        .testTarget(name: "DownloaderPresentationTests", dependencies: ["DownloaderPresentation"]),
         .testTarget(name: "DownloaderCoreTests", dependencies: ["DownloaderCore", "ProcessFixtureSupport"],
                     resources: [.copy("Fixtures")])
     ],

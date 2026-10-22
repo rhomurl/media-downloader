@@ -40,9 +40,12 @@ public actor JobCoordinator {
     }
     private func unsubscribe(_ id: UUID) { subscribers[id] = nil }
 
-    public func preview(_ request: PreviewRequest) async {
-        guard !closed, kind != .download else { return }
-        let id = UUID()
+    /// Supply a fresh operation ID to establish UI identity before suspension.
+    /// False means this request was rejected, cancelled, or superseded before launch.
+    @discardableResult
+    public func preview(_ request: PreviewRequest, operationID: UUID = UUID()) async -> Bool {
+        guard !closed, kind != .download else { return false }
+        let id = operationID
         generation = id; cancellationRequested = false; kind = .preview; ready = nil
         resetCapture()
         set(id, .previewing)
@@ -51,9 +54,10 @@ public actor JobCoordinator {
         let previous = task
         previous?.cancel()
         await previous?.value
-        guard generation == id, !closed else { return }
-        guard !cancellationRequested else { finish(id, .cancelled); return }
+        guard generation == id, !closed else { return false }
+        guard !cancellationRequested else { finish(id, .cancelled); return false }
         task = Task { await self.runPreview(request, id: id) }
+        return true
     }
 
     public func invalidatePreview() async {
@@ -68,18 +72,23 @@ public actor JobCoordinator {
         task = nil; kind = nil
     }
 
-    public func download(preset: OutputPreset, destination: URL) async {
-        guard !closed, kind == nil else { return }
+    /// The expected preview ID is checked atomically before capturing ready input.
+    /// Rejection returns false without launching a job; it need not emit a snapshot.
+    @discardableResult
+    public func download(preset: OutputPreset, destination: URL, previewOperationID: UUID? = nil, operationID: UUID = UUID()) async -> Bool {
+        guard !closed, kind == nil else { return false }
+        if let previewOperationID, generation != previewOperationID { return false }
         guard let ready else {
             let id = UUID(); generation = id
             set(id, .failed, issue: .invalidURL)
-            return
+            return false
         }
-        let id = UUID()
+        let id = operationID
         generation = id; cancellationRequested = false; kind = .download
         resetCapture()
         set(id, .downloading, metadata: ready.metadata)
         task = Task { await self.runDownload(ready.request, metadata: ready.metadata, preset: preset, destination: destination, id: id) }
+        return true
     }
 
     public func cancel() async {
@@ -95,9 +104,12 @@ public actor JobCoordinator {
         if generation == id, kind != nil { finish(id, .cancelled) }
     }
 
-    public func shutdown() async {
+    /// Returns the final safe state after the shutdown barrier, including uncertainty.
+    @discardableResult
+    public func shutdown() async -> JobSnapshot {
         closed = true
         await cancel()
+        return snapshot
     }
 
     private func runPreview(_ request: PreviewRequest, id: UUID) async {
