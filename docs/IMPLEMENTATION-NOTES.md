@@ -25,3 +25,18 @@ approved scope, in chronological order.
 12. Keep planned URL-based FilePublishing and exclusive atomic publication; reject observed path/inode changes and use descriptor-relative no-follow cleanup, but do not promise protection against a hostile same-user process racing the precise publication syscall — this personal tool assumes no concurrently malicious same-UID actor, and changing publishing API is unnecessary for ordinary replacement safety — cost if wrong: publication safety would need a stronger descriptor/identity-aware API for that threat.
 13. Latch ProcessFailure.shutdownUnconfirmed for the coordinator session, expose distinct AppIssue.shutdownUnconfirmed, and refuse new preview/download; UI must retain this session block even through dependency rechecks — unknown descendants may still exist, so permitting retry would undermine one-active-operation safety — cost if wrong: a transient inspection failure requires quitting/checking tools before reopening. DependencyResolver already stops at first execute failure; Task7 must latch its shutdown-unconfirmed report code too.
 14. The developer integration harness may supervise bounded identity-checked known descendants across process groups, but must retain its fixture root after forced timeout/interruption, failed/crashed driver, incomplete monitoring or uncertain ancestry, even when observed PIDs stop — macOS Python polling cannot prove containment of arbitrary fast daemonization, so fail-closed retention is preferable to broader OS containment — cost if wrong: failed developer runs may leave private temporary fixture directories for manual cleanup; arbitrary daemonizing test drivers remain outside the proof. HTTP workers still must be closed/joined before normal cleanup.
+
+## Completion record
+
+All eight implementation tasks passed independent spec/quality gates. Final
+whole-branch review found no critical or important defect; its one minor test
+finding and the separately discovered final-validation fixture race were fixed
+and passed scoped review. The final Swift suite passed 148 reported tests with
+six explicit opt-in skips; ten Python lifecycle tests and separately enabled
+real MP4/MP3 integration passed. Native GUI and the selected public YouTube
+MP4/MP3 checks passed within the exact limits in [VERIFICATION.md](VERIFICATION.md).
+
+The [review record](reviews/2026-10-23-implementation-review.md) preserves the final
+assessment and follow-up closure. Keep the local branch and checkout; no remote,
+push, merge target, public release, or distribution was requested. Login-required
+and actual browser-profile/cookie checks remain pending explicit user input.

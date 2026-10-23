@@ -1,5 +1,7 @@
 # Personal macOS Media Downloader Implementation Plan
 
+Execution status (2026-10-23): all eight tasks implemented and independently reviewed using the user-selected subagent workflow. See [verification evidence](../../VERIFICATION.md) for completed local/public checks and pending private/browser/platform checks. The checklist below is the original execution plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution method awaits the user's choice; do not dispatch agents or start product implementation before that choice.
 
 **Goal:** Build a personal native macOS app that previews one video URL and downloads compatible MP4 video or MP3 audio, optionally using explicitly selected browser cookies.

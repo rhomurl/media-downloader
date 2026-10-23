@@ -358,3 +358,32 @@ The idle GUI was closed before rebuilding. This command starts neither browser
 cookie access nor remote-site extraction. Final review status is recorded in
 [implementation decisions](IMPLEMENTATION-NOTES.md); no distribution action is
 implied by these local checks.
+
+### Final test-only follow-ups and review closure
+
+The whole-branch review found no critical or important issue. Its one P3 test
+ordering weakness was fixed in `b49d7ef`: the stale profile refresh is explicitly
+awaited before assertions/shutdown. Removing the production browser/epoch guards
+made that test fail; restoring them passed all 22 presentation tests. Scoped
+review approved the fix without production changes.
+
+The next full run exposed one existing orphan-fixture timeout: a successful
+underlying process return bypassed the test adapter's stopped/release barrier.
+A deterministic natural-return-before-Quit regression reproduced it. Test-only
+commit `3834115` gives normal/error results a common barrier and makes failure
+cleanup join shutdown before deletion, retaining the root on typed uncertainty.
+Three focused tests / five cases passed; independent scoped review approved both
+corrections. The controller then ran `bash scripts/test.sh` on the final tree:
+**148 reported tests / 16 suites passed in 10.795 seconds, exit 0**, with the same
+six explicit opt-in skips. No warnings or failures were reported.
+
+The final inspection-order Python correction at `7c62b0a` was separately checked
+by the controller: `python3 scripts/test-integration.py` passed **10 tests in
+10.097 seconds**, exit 0. This supersedes the earlier nine-test lifecycle count.
+Real integration remains five functions / ten cases from the successful combined
+run; there have been no app-source, resource, or bundle-assembly changes since
+that verification. Only tests, developer harness, and documentation changed.
+
+The completed [review record](reviews/2026-10-23-implementation-review.md) includes
+scope limits and follow-up closure. Private/browser-cookie and listed platform
+checks remain pending; no release or distribution action was taken.
