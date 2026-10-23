@@ -50,29 +50,29 @@ A temporary observed-format download without publication passes the normal real
 ArtifactVerifier as H.264/AAC; owned diagnostic media was cleaned. Installed and
 upstream TikTok extraction explicitly emit h264/aac. Do not record real inputs.
 
-- [ ] Add genuine failing selector tests using installed real yt-dlp and entirely
+- [x] Add genuine failing selector tests using installed real yt-dlp and entirely
   synthetic metadata/loopback media. Accept existing avc1/mp4a prefixes plus exact
   h264 and aac aliases, including mixed labels, separate streams and combined
   streams. Reject h265/HEVC/AV1/VP9/Opus/none, missing/null and lookalike alias strings
   (h264junk/aacjunk). Reject unknown codecs for generic/TikTok inputs. Preserve the
   existing Facebook/Instagram-only unknown-label progressive exception verbatim.
-- [ ] Use regex filters preserving old prefix behavior and exact aliases:
+- [x] Use regex filters preserving old prefix behavior and exact aliases:
   `bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']`.
   Verify this exact syntax with installed yt-dlp rather than only string assertions.
   Keep strict labelled selection first, the existing scoped trailing selector,
   remux/no-transcoding and all launch flags unchanged. No TikTok unknown fallback.
-- [ ] Add a real loopback positive alias case through actual download and artifact
+- [x] Add a real loopback positive alias case through actual download and artifact
   validation (synthetic labelled info JSON is allowed; a test-only runner may load
   that fixture after production argv construction, preserving actual downloaded
   bytes/probe results). Include falsely labelled incompatible fixture rejection
   if the fixture infrastructure can share the existing portrait pair. Clearly
   disclose synthetic metadata, no fabricated process/probe/final-event success.
   Keep fixture files under owned integration roots and cleanup barriers intact.
-- [ ] Run focused RED/GREEN command and enabled loopback checks. Update docs with
+- [x] Run focused RED/GREEN command and enabled loopback checks. Update docs with
   verified aliases, safe evidence, and live-retry pending. Self-review, diff check
   and commit scoped files. Full final verification runs in Task 2 after combined
   final code; do not redundantly run full/release checks in Task 1.
-- [ ] Write task-1-report.md with files, RED/GREEN command evidence/counts, limits
+- [x] Write task-1-report.md with files, RED/GREEN command evidence/counts, limits
   and commit. No subagents or live requests; root handles independent review.
 
 ### Task 2: Direct Download with cancellable internal metadata validation
@@ -86,34 +86,34 @@ It owns one download operation across metadata preparation and transfer. Reuse
 metadata extraction/validation internally without duplicating the parser/runner
 logic. Do not orchestrate subprocesses in views or chain via observer polling.
 
-- [ ] Add failing tests for direct MP4/MP3, immutable click-time capture, valid
+- [x] Add failing tests for direct MP4/MP3, immutable click-time capture, valid
   matching-preview reuse, missing/invalid URL, explicit Brave profile requirement,
   metadata/collection/live rejection, repeated clicks and stale completion.
-- [ ] Add deterministic barrier-based tests: cancel/quit during metadata and while
+- [x] Add deterministic barrier-based tests: cancel/quit during metadata and while
   awaiting an earlier invalidation, concurrent new requests, metadata failure,
   unsafe shutdown (including stale operation) cannot launch media/probe or clean
   retained staging. Prove metadata completion is joined before transfer. Existing
   old-ready tests should assert no stale authorization/metadata; canDownload now
   means eligible to begin preparation, not proof of already-ready metadata.
-- [ ] Implement the overload and AppModel path. Guard identity/cancellation again
+- [x] Implement the overload and AppModel path. Guard identity/cancellation again
   after every suspension and before launch. Freeze operation inputs from click,
   block dependency changes and duplicate work, preserve shutdown precedence and
   never expose intermediate ready as an opportunity for another launch. Avoid
   sleeps, task-yield assumptions and duplicated operation lifecycle logic.
-- [ ] Enable Download when dependencies and URL/browser/profile inputs allow a new
+- [x] Enable Download when dependencies and URL/browser/profile inputs allow a new
   operation; keep Preview optional and busy/blocked states disabled. Validate
   invalid URL before spawning. Update initial/status/error copy to avoid insisting
   on Preview; preserve safe fixed error strings.
-- [ ] Extend real loopback MP4/MP3 success and preparation-failure coverage to the
+- [x] Extend real loopback MP4/MP3 success and preparation-failure coverage to the
   new direct coordinator entry, while retaining explicit Preview coverage.
-- [ ] Update canonical flow and README; link docs/SUPPORTED-SITES.md (root/research
+- [x] Update canonical flow and README; link docs/SUPPORTED-SITES.md (root/research
   agent owns that file; do not modify it). Record safe actual verification.
-- [ ] Run focused RED/GREEN, then one final `bash scripts/verify.sh --integration`
+- [x] Run focused RED/GREEN, then one final `bash scripts/verify.sh --integration`
   (includes bash scripts/test.sh, release/signature, Python lifecycle and real
   loopback) and `swift build --product MediaDownloader`. Required checks must pass;
   fix actual failures before claiming completion. Escalate for approved standard
   SwiftPM/cache/process/loopback permissions. No installs/updates.
-- [ ] Self-review and commit only scoped files, write task-2-report.md with exact
+- [x] Self-review and commit only scoped files, write task-2-report.md with exact
   results/limits. No subagents or live requests. Root independently reviews final
   work, retries actual TikTok through the direct Download GUI, checks Finder exact
   output with FFprobe, and records honest per-site verification limits.
@@ -126,3 +126,28 @@ extractor availability. User priorities are X/Twitter, Reddit and SoundCloud;
 these are future integration checks, not promised working sites. Root integrates
 this document and updates TikTok status only after actual live success. No new
 site feature beyond verified aliases is authorized by merely listing candidates.
+
+## Recorded implementation decisions
+
+Ruling: verified exact h264/aac aliases are accepted for labelled selection across
+sites, retaining existing avc1/mp4a prefix support and unknown-codec restrictions —
+codec names describe the same required streams and original plan permits verified
+aliases — cost if an extractor mislabels: validation rejects the downloaded
+incompatible artifact.
+
+Ruling: direct Download runs required metadata validation internally under one
+cancellable operation, reusing a fresh matching preview where possible — user
+wants to skip the Preview button while safety contracts still bind — cost: an
+unpreviewed URL has metadata preparation latency before transfer.
+
+## Execution result
+
+Task 1: `9435858`; independent scoped spec/quality review approved with no findings.
+Task 2: `9b2d94e`; required final checks passed: 168 Swift tests/16 suites (ten
+explicit opt-in functions skipped in default phase), ten Python lifecycle tests,
+nine real integration functions/62 cases, signed release bundle and native build.
+Root directly downloaded the failing TikTok source without Preview or browser
+cookies; Finder and independent FFprobe confirmed the actual published H.264/AAC
+576×1024 MP4. Privacy-safe details and platform/site limits are in VERIFICATION.md.
+The compatibility catalog records verified sources and the user's prioritized
+candidates. Independent [final review](../../reviews/2026-10-23-tiktok-and-direct-download-review.md) approved spec compliance, quality and complete two-task readiness with no findings. Controller live/catalog closure is complete; work remains on the existing local branch.

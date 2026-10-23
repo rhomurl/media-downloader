@@ -681,3 +681,26 @@ rebuilt. Independent controller review and the selected TikTok source's direct
 native Download/Finder/FFprobe retry remain pending at this handoff. Existing
 private-source, browser-permission, other GUI/platform and distribution limits
 remain distinct. See [site evidence and future checks](SUPPORTED-SITES.md).
+
+### Controller native TikTok and direct Download closure
+
+The controller launched the rebuilt bundle from the full project dist path;
+this was a fresh window with blank URL, browser None, the user's saved output
+preference, optional Preview, and disabled Download until valid input. After
+entering the same previously failing TikTok source and selecting MP4, Download
+was immediately enabled. The controller clicked Download without ever pressing
+Preview. Internal preparation progressed to transfer and Download complete.
+Show in Finder selected the actual published file in Downloads. Independent
+FFprobe at that exact path confirmed MP4-family container, 576×1024 H.264 video,
+AAC audio, 31.345011 seconds, 2,155,046 bytes. The previous MP3 output preference
+was restored after the MP4 test; browser choice remained None. No cookie access,
+video transcoding or tool installs/updates were used.
+
+This verifies the selected TikTok source through the new one-click native flow,
+not general/private TikTok support or live results for candidate sites. Source
+URL/title/format identifiers, raw metadata/diagnostics and browser details are
+not saved in repository evidence. The installed Applications copy was not
+replaced; these observations use the newly built project bundle. The
+[site catalog](SUPPORTED-SITES.md) separates live evidence from candidates and
+records X/Twitter, Reddit and SoundCloud as the user's next priorities.
+Independent [task/final review](reviews/2026-10-23-tiktok-and-direct-download-review.md) approved both changes with no findings. Other manual/platform and private-source limitations remain explicit.

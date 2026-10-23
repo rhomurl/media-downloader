@@ -1,6 +1,6 @@
 # Site compatibility
 
-Updated 2026-10-23. Selected videos from **YouTube, Facebook, and Instagram**
+Updated 2026-10-23. Selected videos from **YouTube, Facebook, Instagram, and TikTok**
 have completed live native-app downloads. This is evidence for those selected
 sources, not a promise that every video on those sites works.
 
@@ -11,7 +11,7 @@ sources, not a promise that every video on those sites works.
 | YouTube | Public video preview, MP4 and MP3 through the native app with browser None. | One selected source; no private/login-required YouTube check. |
 | Facebook | Selected reel preview and MP4; independent FFprobe confirmed H.264/AAC. | Explicitly selected Brave profile; login necessity was not established. MP3 and other sources were not verified. |
 | Instagram | Selected reel preview and MP4; independent FFprobe confirmed H.264/AAC. | Explicitly selected Brave profile; login necessity was not established. MP3 and other sources were not verified. |
-| TikTok | Current selected-source attempt reproduced format unavailable; investigation and retry pending. | Not yet verified as working in this app. Installed extractor presence alone does not resolve this failure. |
+| TikTok | Selected video downloaded as MP4 through the native app using Download directly, without Preview; independent FFprobe confirmed H.264/AAC. | Browser None; one selected source. MP3, private/login-required sources and other videos were not live verified. |
 
 The [verification record](VERIFICATION.md) contains the actual observations,
 tool versions, and remaining manual/platform limits. The successful live checks
