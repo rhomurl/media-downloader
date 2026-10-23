@@ -1,5 +1,7 @@
 # Personal macOS Media Downloader Implementation Plan
 
+Execution status (2026-10-23): all eight tasks implemented and independently reviewed using the user-selected subagent workflow. See [verification evidence](../../VERIFICATION.md) for completed local/public checks and pending private/browser/platform checks. The checklist below is the original execution plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution method awaits the user's choice; do not dispatch agents or start product implementation before that choice.
 
 **Goal:** Build a personal native macOS app that previews one video URL and downloads compatible MP4 video or MP3 audio, optionally using explicitly selected browser cookies.
@@ -9,6 +11,8 @@
 **Tech Stack:** Swift 6.2 language mode, SwiftUI/AppKit, Foundation, Darwin POSIX APIs, Swift Testing, external yt-dlp/FFmpeg/FFprobe/Deno. Target macOS 14+ for the app; verification in this project initially covers this Apple Silicon macOS 26.6.2 machine only. No third-party Swift package dependencies.
 
 **Spec:** [Approved design](../specs/2026-10-15-media-downloader-design.md). Read it with this plan. [Review and original evidence](../../PLAN-REVIEW.md).
+
+**Execution:** User selected subagent-driven execution. During execution the user requested an explicit Brave profile picker; Tasks 3/6/7 incorporate that refinement. Task 1 supplies `scripts/test.sh` to accommodate this installed Command Line Tools' Testing framework; substitute `bash scripts/test.sh` for bare `swift test` in every subsequent command, including the integration harness.
 
 ## Global Constraints
 
@@ -47,7 +51,7 @@ All paths below are relative to the repository root. Keep responsibilities in th
 | `Sources/DownloaderCore/ProcessCommand.swift` | Executable/argument/environment/timeout values and runner protocol |
 | `Sources/DownloaderCore/ProcessRunner.swift`, `LineFramer.swift` | Process groups, pipes, cancellation, incremental byte framing |
 | `Sources/ProcessFixture/main.swift` | Developer-only subprocess test helper; excluded from `.app` |
-| `Sources/DownloaderCore/URLValidator.swift`, `YTDLPCommands.swift`, `YTDLPEvents.swift`, `MetadataDecoder.swift` | URL policy, commands, events, metadata validation |
+| `Sources/DownloaderCore/URLValidator.swift`, `YTDLPCommands.swift`, `YTDLPEvents.swift`, `MetadataDecoder.swift`, `BraveProfiles.swift` | URL policy, commands, events, metadata validation, opt-in profile display-name discovery |
 | `Sources/DownloaderCore/DependencyResolver.swift`, `DependencyDiagnostics.swift` | Tool discovery and offline capability report |
 | `Sources/DownloaderCore/JobFiles.swift`, `ArtifactVerifier.swift` | Owned staging, safe names, codec checks, atomic publication |
 | `Sources/DownloaderCore/JobCoordinator.swift`, `AppIssueClassifier.swift` | State, operation generations, workflow, safe error categories |
@@ -217,11 +221,13 @@ Supply the final initialized attrs to `posix_spawn`. Own all file descriptors an
 
 ### Task 3: Define URL, command, metadata, and event contracts
 
-**Files:** Create `URLValidator.swift`, `YTDLPCommands.swift`, `YTDLPEvents.swift`, `MetadataDecoder.swift` in `Sources/DownloaderCore/`; create corresponding `*Tests.swift` and fixtures `single-video.json`, `collection.json`, `metadata-missing-optionals.json` under `Tests/DownloaderCoreTests/Fixtures/`; configure copied test resources in `Package.swift`.
+**Files:** Create `URLValidator.swift`, `YTDLPCommands.swift`, `YTDLPEvents.swift`, `MetadataDecoder.swift`, `BraveProfiles.swift` in `Sources/DownloaderCore/`; extend `PreviewRequest` and `AppIssue` in `Models.swift` for the user-requested Brave profile choice; create corresponding `*Tests.swift` and fixtures `single-video.json`, `collection.json`, `metadata-missing-optionals.json`, `brave-local-state.json` under `Tests/DownloaderCoreTests/Fixtures/`; configure copied test resources in `Package.swift`.
 
 **Consumes:** Core types and runner protocol. **Produces:** `URLValidator.validate(_ raw: String) throws -> URL`; `YTDLPCommands(tools: ResolvedTools)` with `preview(_ request: PreviewRequest) throws -> ProcessCommand` and `download(_ request: PreviewRequest, preset: OutputPreset, staging: URL) throws -> ProcessCommand`; `MetadataDecoder.decode(_ bytes: Data) throws -> VideoMetadata`; `YTDLPEventDecoder.decode(_ line: ProcessLine) -> YTDLPEvent?`.
 
 Define `YTDLPEvent` cases `download(TransferProgress)`, `postprocess`, `finalPath(String)`, `malformed`. Decode metadata only in preview, and progress/final events only in download. Validate string size/depth through bounded input and `JSONDecoder`; malformed control JSON fails the job safely rather than silently reporting completion.
+
+User-requested auth refinement: add `braveProfileID: String?` to `PreviewRequest` and an initializer defaulting it to nil, preserving existing callers. Add `AppIssue.profileRequired` with safe copy “Choose a Brave profile to use its login.” Define `struct BraveProfile: Identifiable, Equatable, Sendable { let id: String; let name: String }`, `protocol BraveProfileProviding: Sendable { func profiles() async throws -> [BraveProfile] }`, and `struct BraveProfileStore: BraveProfileProviding` with `init(registry: URL)` and `static func decode(_ bytes: Data) throws -> [BraveProfile]`. The default registry is `~/Library/Application Support/BraveSoftware/Brave-Browser/Local State`. Read at most 16 MiB off the main actor, parse only `profile.info_cache` keys and each `name`, accept `Default` or `Profile <digits>` IDs, exclude Guest/System profiles, and sort deterministically. Duplicate display names are disambiguated by ID in the UI. No directory enumeration, cookie/database reads, registry logging, or profile persistence. Missing/malformed registry maps to a safe browser-access error. Discovery is called only when Brave is explicitly selected, never at startup.
 
 - [ ] **Step 1: Write failing behavioral tests.**
 
@@ -236,7 +242,7 @@ Define `YTDLPEvent` cases `download(TransferProgress)`, `postprocess`, `finalPat
 }
 @Test func estimatedProgressDoesNotRequireAnExactTotal() {
     let line = ProcessLine(stream: .stderr,
-        bytes: Data(#"MD_DOWNLOAD:{"status":"downloading","downloaded_bytes":50,"total_bytes_estimate":100}"#.utf8))
+        bytes: Data(#"MD_DOWNLOAD:{"progress":{"status":"downloading","downloaded_bytes":50,"total_bytes_estimate":100},"stream_id":"137"}"#.utf8))
     guard case .download(let value) = YTDLPEventDecoder.decode(line) else {
         Issue.record("Expected progress event"); return
     }
@@ -245,29 +251,49 @@ Define `YTDLPEvent` cases `download(TransferProgress)`, `postprocess`, `finalPat
 }
 ```
 
-Define `TestSupport.tools` with deterministic absolute fake tool URLs. Also test `file:`, missing host, credentials in authority, newline/NUL and option-like input rejection; query preservation; no-cookie default; same browser in preview/download; playlist and multi-video rejection; absent duration/thumbnail; non-HTTP thumbnail rejection; live/upcoming media rejection; malicious title containing `%(title)s`, quotes and slashes; progress on either stream, null/zero/negative totals, nonfinite/invalid numbers, stream ID changes, and JSON-escaped final paths. Run filtered tests and expect failure.
+Define `TestSupport.tools` with deterministic absolute fake tool URLs. Also test `file:`, missing host, credentials in authority, newline/NUL and option-like input rejection; query preservation; no-cookie default; same browser/profile in preview/download; Brave without an explicit profile; `brave:Profile 1` kept as one argument; invalid path/colon/NUL profile IDs; fixture registry parsing without touching actual browser data; duplicate names; Guest/System exclusion; missing/malformed/oversized registry; playlist and multi-video rejection; absent duration/thumbnail; non-HTTP thumbnail rejection; live/upcoming media rejection; malicious title containing `%(title)s`, quotes and slashes; progress on either stream, null/zero/negative totals, nonfinite/invalid numbers, stream ID changes, and JSON-escaped final paths. Run filtered tests and expect failure.
 
-- [ ] **Step 2: Implement deterministic argument arrays.** Common flags: `--ignore-config`, `--no-plugin-dirs`, `--no-remote-components`, `--no-js-runtimes`, `--js-runtimes deno:<absolute-path>`, `--ffmpeg-location <ffmpeg-parent>`, `--no-playlist`, `--socket-timeout 20`, `--retries 2`, `--fragment-retries 2`, `--no-colors`. Apply cookies only if browser is not `.none`; URL is always last after `--`. Build a controlled environment with resolved helper directories and system paths, preserving HOME for browser access but excluding `PYTHONPATH`, plugin paths, debugging overrides, and proxy credentials. Do not log arguments.
+- [ ] **Step 2: Implement deterministic argument arrays.** Common flags: `--ignore-config`, `--no-plugin-dirs`, `--no-remote-components`, `--no-js-runtimes`, `--js-runtimes deno:<absolute-path>`, `--ffmpeg-location <ffmpeg-parent>`, `--no-playlist`, `--socket-timeout 20`, `--retries 2`, `--fragment-retries 2`, `--no-colors`. Apply cookies only if browser is not `.none`; Brave requires a validated explicit profile ID and passes `--cookies-from-browser` followed by the single argument `brave:<profile ID>`. Chrome/Firefox use their default browser profile in this slice. URL is always last after `--`. Build a controlled environment with resolved helper directories and system paths, preserving HOME for browser access but excluding `PYTHONPATH`, plugin paths, debugging overrides, and proxy credentials. Do not log arguments.
 
 Preview adds `--dump-single-json --skip-download --flat-playlist --playlist-end 1`, timeout 60 seconds, and 16 MiB line cap. The bounded flat listing is only for identifying/rejecting collection results; do not extract/download collection entries. Reject `_type` playlist/multi-video results, including a one-item collection; accept a single-video URL with playlist context through `--no-playlist`. Reject active/upcoming live media explicitly because the first slice is a finite-file workflow.
 
 Download adds `--no-simulate --newline --progress --progress-delta 0.2`, the following machine-readable templates, `--no-overwrites --no-post-overwrites`, and an absolute output template under staging:
 
 ```text
---progress-template download:MD_DOWNLOAD:%(progress)j
+--progress-template download:MD_DOWNLOAD:{"progress":%(progress)j,"stream_id":%(info.format_id|"")j}
 --progress-template postprocess:MD_POSTPROCESS:%(progress)j
 --print after_move:MD_FINAL:%(filepath)j
 -o <staging>/media.%(ext)s
 ```
 
+The download envelope gets stream ID from `info.format_id`, not from `progress.info_dict`: the installed upstream template adapter removes `info_dict` from the progress object. The explicit `|""` fallback keeps missing IDs valid JSON (the default literal `NA` is not JSON). Treat absent/empty/`NA` stream IDs as nil. Tests must use this exact envelope shape so stream changes are exercised against the real command contract.
+
 MP4 selector and options:
 
 ```text
--f bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]
+-f bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']
 --merge-output-format mp4 --remux-video mp4
 ```
 
-The selector is intentionally strict; if an extractor uses alternative codec labels, add only verified H.264/AAC aliases with selector fixtures and artifact checks. Unknown codec metadata does not establish compatibility and can yield format-unavailable even for a direct MP4 URL; pin this behavior in fixtures. Do not expand to arbitrary codec fallback or use `--recode-video`. MP3 uses `-f ba/b -x --audio-format mp3 --audio-quality 2`. No `--ignore-errors`, remote component downloads, or shell `--exec` hooks.
+The selector is intentionally strict. The 2026-10-23 correction admits exact `h264`/`aac` aliases alongside existing `avc1`/`mp4a` prefixes, including mixed labels and separate or combined streams. Real yt-dlp synthetic-info selection and actual loopback artifact checks cover these aliases; strings such as `h264junk`/`aacjunk` are excluded. No TikTok unknown-label fallback is added. Future alternative codec labels require verified H.264/AAC aliases with selector fixtures and artifact checks. Unknown codec metadata does not establish compatibility and can yield format-unavailable even for a direct MP4 URL; pin this behavior in fixtures.
+
+Approved scoped exception (2026-10-23): after the strict selector above, append
+`/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]` only when the validated HTTP(S) URL host
+is `facebook.com` or `instagram.com`, or a subdomain of either. Facebook and
+Instagram progressive MP4 entries can omit codec labels; known incompatible/absent-stream
+labels remain excluded. `fb.watch`, `instagr.am`, lookalike hosts, and every other
+host retain strict policy. Never inspect arbitrary query values to choose this policy. Actual FFprobe H.264/AAC validation remains
+mandatory before publication; map only `incompatibleMedia` to format unavailable,
+retaining other probe-error and shutdown-unconfirmed behavior. Add host/argv tests
+and real-coordinator loopback regressions for portrait H.264/AAC publication and
+portrait MPEG-4/AAC rejection with missing source labels. A test-only runner may
+map only the exact reserved synthetic Facebook/Instagram URLs to loopback after
+command construction; no automated real-site fetch or browser data is permitted. Preserve the generic
+unknown-codec MP4 rejection test. See the
+[Facebook requirements](../../bugfixes/2026-10-23-facebook-mp4.md) and
+[Instagram extension](../../bugfixes/2026-10-23-instagram-mp4.md).
+
+Do not expand to arbitrary codec fallback or use `--recode-video`. MP3 uses `-f ba/b -x --audio-format mp3 --audio-quality 2`. No `--ignore-errors`, remote component downloads, or shell `--exec` hooks.
 
 - [ ] **Step 3: Decode metadata/events and retest.** Clamp display fractions to 0...1 only for positive finite totals; absent sizes remain indeterminate. A stream's 100% event does not mean job completion. Return nil for ordinary warnings; `.malformed` for an invalid app-prefixed control event. Require one root video object and valid nonempty ID/title; invalid optional metadata does not crash the UI. Run `swift test --filter 'URLValidator|YTDLPCommands|MetadataDecoder|YTDLPEvents'`, expect PASS; commit `feat: define safe extraction and progress contracts`.
 
@@ -330,15 +356,17 @@ No URL means no extraction. The local installed build prints `Optional libraries
 }
 ```
 
-`TestSupport.temporaryDirectory() throws -> URL` creates a test-owned scratch directory only. Add tests for an existing output with the same UUID, empty title fallback, NUL/control characters, slash/colon/backslash, `%` remaining filename data, symlink candidate, sibling path sharing a prefix, `../` final path, nonexistent/zero-byte artifact, incorrect extension, deleted destination, and cleanup refusal for an unowned directory. Stub a publication filesystem failure with ENOSPC rather than filling the user's disk. Probe fixtures must reject H.265/AAC for MP4, H.264 without audio, mislabeled container, MP3 without audio, and nonzero/invalid probe output. Expect filtered tests to fail.
+`TestSupport.temporaryDirectory() throws -> URL` creates a test-owned scratch directory only. Add tests for an existing output with the same UUID, empty title fallback, NUL/control characters, slash/colon/backslash, `%` remaining filename data, symlink candidate, sibling path sharing a prefix, `../` final path, nonexistent/zero-byte artifact, incorrect extension, deleted destination, and cleanup refusal for an unowned directory. Stub a publication filesystem failure with ENOSPC rather than filling the user's disk. Probe fixtures must reject H.265/AAC for MP4, H.264 without audio, additional incompatible audio/video streams, mislabeled container, MP3 without audio, and nonzero/invalid probe output. Expect filtered tests to fail.
 
 - [ ] **Step 2: Implement controlled file operations.** Create destination child `.media-downloader-<UUID>` with private directory permissions and track ownership in the `StagedJob` value and filesystem identity. yt-dlp's basename is always `media`. The candidate must resolve to the exact expected regular non-symlink `media.mp4`/`media.mp3` in that staging directory; use filesystem path-component equality, not string-prefix containment. A JSON final path is untrusted input.
 
 Normalize a title for display filenames, remove control/separator characters, append Unicode scalars without splitting UTF-8 beyond 120 bytes, trim trailing whitespace, fall back to `video`, then append `-<full UUID>.<extension>`. Keep title strings away from command templates. Publish using same-filesystem `renamex_np(..., RENAME_EXCL)` so collisions never overwrite; an error leaves the candidate owned by the job. Cleanup must check ownership and remove only that directory. Never clean before runner completion; coordinator owns ordering.
 
-- [ ] **Step 3: Implement artifact inspection.** Run absolute FFprobe with `-v error -show_format -show_streams -of json <candidate>`, 15-second timeout and 1 MiB cap. Require an MP4-family container with H.264 video and AAC audio for `.mp4`; require MP3 container/audio and no video for `.mp3`. Reject empty data, symlinks, malformed JSON, missing/incorrect streams, nonzero exit, and cancellation. Do not decode/play the whole file. Run `swift test --filter 'JobFiles|ArtifactVerifier'`, expect PASS; commit `feat: validate and atomically publish owned output files`.
+- [ ] **Step 3: Implement artifact inspection.** Run absolute FFprobe with `-v error -show_format -show_streams -of json <candidate>`, 15-second timeout and 1 MiB cap. Require an MP4-family container with H.264 video and AAC audio for `.mp4`; every video/audio stream must satisfy that codec policy, rather than accepting one compatible pair alongside incompatible streams. Require MP3 container/audio and no video for `.mp3`. Reject empty data, symlinks, malformed JSON, missing/incorrect streams, nonzero exit, and cancellation. Preserve the exact `ProcessFailure.shutdownUnconfirmed(Int32)` case through verifier errors so the coordinator can retain staging when child shutdown is uncertain; add a fixture for it. Do not decode/play the whole file. Run `swift test --filter 'JobFiles|ArtifactVerifier'`, expect PASS; commit `feat: validate and atomically publish owned output files`.
 
 ### Task 6: Integrate preview/download state and safe errors
+
+**2026-10-23 direct-Download refinement:** The additional `download(_ request: PreviewRequest, preset: OutputPreset, destination: URL, operationID: UUID) async -> Bool` owns metadata preparation and transfer in one task/operation. It shares bounded extraction/validation with explicit Preview, skips preparation only for a currently ready matching request, and never exposes an intermediate ready state. The expected-preview-ID overload remains for ready-preview reuse. Guard cancellation/identity after suspensions; metadata failure, collection/live rejection, Cancel/Quit and shutdown uncertainty cannot launch transfer. Direct retries after terminal states prepare fresh metadata. Regression coverage uses explicit metadata-return and invalidation barriers, and retains all existing file/process/session contracts.
 
 **Files:** Create `Sources/DownloaderCore/JobCoordinator.swift`, `AppIssueClassifier.swift`, `Tests/DownloaderCoreTests/JobCoordinatorTests.swift`, `AppIssueClassifierTests.swift`; extend `ScriptedRunner.swift` with controllable suspended replies for race tests.
 
@@ -363,23 +391,29 @@ Normalize a title for display filenames, remove control/separator characters, ap
 
 Define `CoordinatorHarness` in test support to own the runner/coordinator/temp destination; `readyVideo() async throws -> CoordinatorHarness` previews a fixture video; `finalPathLine(for: ProcessCommand) throws -> ProcessLine` reads the staging output template from that command, substitutes the expected extension, and JSON-encodes the path; `waitForTerminal() async throws -> JobSnapshot` subscribes with a five-second test deadline; `completedFiles() throws -> [URL]` lists non-staging files. Extend `ScriptedRunner` with `waitForCommand(at index: Int) async throws -> ProcessCommand` (five-second deadline) and `resume(_ reply: ScriptedReply, at index: Int)`; a run without an enqueued reply waits at that index and observes task cancellation. This captures staging paths before sending final events rather than assuming random UUIDs.
 
-Cover: valid preview; timeout; malformed JSON; collection/live input; repeated preview; slow old preview completing after a changed URL/browser; missing metadata optionals; download without ready preview; second active operation refused; same browser in preview/download; unknown totals/stream changes; processing after transfer 100%; duplicate/missing final event; forged path; FFmpeg exit failure; FFprobe rejection; disk-full/publication failure; clean success; cancellation in each cancellable phase; retry with fresh generation; quit with active descendants; cleanup after readers finish. During publication, Cancel does not convert a published result to cancelled. Expect tests to fail before workflow implementation.
+Cover: valid preview; timeout; malformed JSON; collection/live input; repeated preview; slow old preview completing after a changed URL/browser/Brave profile; missing metadata optionals; download without ready preview; second active operation refused; same browser and exact profile ID in preview/download; unknown totals/stream changes; processing after transfer 100%; duplicate/missing final event; forged path; FFmpeg exit failure; FFprobe rejection; disk-full/publication failure; clean success; cancellation in each cancellable phase; retry with fresh generation; quit with active descendants; cleanup after readers finish. During publication, Cancel does not convert a published result to cancelled. Expect tests to fail before workflow implementation.
 
 - [ ] **Step 2: Implement generation-owned workflow and bounded diagnostics.** Keep one tracked task. `preview` captures the immutable request and replaces only a preview, awaiting old cancellation before starting another subprocess. URL/browser edits invalidate cached metadata. A download captures the validated request/metadata/preset/destination; disable mutating controls until terminal state. Operation UUID checks guard every asynchronous callback and publication step. Cancellation during validation is supported; publication is a non-suspending actor operation after a final cancellation/generation check.
 
-Preview success saves only display metadata and immutable request in memory, not cookie data or signed media URLs. Download re-extracts using that request. Require current generation, successful exit, exactly one valid final event, candidate verification, and atomic publication before `.succeeded`. Run the verifier before publication and clean staging on all terminal paths after children stop. Cleanup failure is a safe secondary message, not permission to delete other paths. Publish/cleanup errors cannot be mistaken for network errors.
+Preview success saves only display metadata and immutable request in memory, not cookie data or signed media URLs. Download re-extracts using that request. Require current generation, successful exit, exactly one valid final event, candidate verification, and atomic publication before `.succeeded`. Run the verifier before publication and clean staging on terminal paths only after children are confirmed stopped. `ProcessFailure.shutdownUnconfirmed(Int32)` from download or verification takes precedence over cancellation/timeout, produces safe failure copy and a notice that temporary files were retained, and MUST skip cleanup. Add tests for both unsafe-shutdown origins. Cleanup failure is a safe secondary message, not permission to delete other paths. Publish/cleanup errors cannot be mistaken for network errors.
+
+After unconfirmed shutdown, latch `AppIssue.shutdownUnconfirmed` for this coordinator session and refuse further preview/download operations, including retry. Invalidate/cancel must not clear this block. Fixed safe copy instructs quitting and checking that tools stopped before reopening; restarting is not evidence of prior process quiescence. Add refusal tests. The presentation layer also latches the equivalent `shutdown-unconfirmed` dependency problem and cannot bypass the block by replacing a coordinator or rerunning checks.
 
 - [ ] **Step 3: Classify errors without exposing raw stderr.** `AppIssueClassifier.classify(exitCode: Int32, diagnostic: Data) -> AppIssue` pattern-matches transient bounded data; `message(for: AppIssue) -> String` returns fixed UI copy. Use specific cookie permission/decryption markers before generic authentication/site/network patterns. Unknown output maps to `.unknown`; never interpolate URLs, headers, paths to browser profiles, tokens, titles, or original output into errors. Test secrets in unknown output and embedded signed URLs never appear in UI copy. Do not infer expired login from a generic extraction failure.
 - [ ] **Step 4: Run `swift test --filter 'JobCoordinator|AppIssueClassifier'` and the complete core suite.** Expect PASS. Commit `feat: coordinate preview download validation and safe retry`.
 
 ### Task 7: Connect the native window, preferences, and quit flow
 
+**2026-10-23 direct-Download refinement:** Download eligibility requires ready dependencies and valid URL/explicit browser-profile inputs; it no longer requires Preview. Capture request/preset/destination and identity before awaiting earlier invalidation, then use the matching-preview overload or atomic direct core entry. Freeze the captured input through preparation/transfer; Cancel/Quit invalidate the pending operation. Show “Preparing download” during internal metadata validation and disable duplicate work/dependency changes throughout. Old-ready tests must assert absence of stale metadata/input reuse; helpers await actual ready metadata rather than `canDownload`.
+
 **Files:** Create `Sources/DownloaderPresentation/AppModel.swift`; create `MainView.swift`, `DependencyView.swift`, `PreviewView.swift`, `DownloadStatusView.swift`, `AppDelegate.swift` in `Sources/MediaDownloaderApp/`; update app entry point; create `Tests/DownloaderPresentationTests/AppModelTests.swift` and declare `DownloaderPresentation` library/test targets in `Package.swift`. The app imports the presentation library; tests import that same model rather than duplicating it.
 
 **Consumes:** Coordinator updates, dependency report, and safe error copy.
-**Produces:** `@MainActor @Observable final class AppModel` with `rawURL`, `browser`, `preset`, `destination`, `snapshot`, `dependencyReport`; methods `checkDependencies() async`, `preview() async`, `download() async`, `cancel() async`, `selectDestination()`, `revealOutput()`, `shutdown() async`. Inject preference storage and folder/Finder closures for deterministic model tests. Production preference keys: `destinationPath`, `outputPreset`, and optional `toolPath.ytdlp`, `toolPath.ffmpeg`, `toolPath.ffprobe`, `toolPath.deno`; never persist browser choice or request data.
+**Produces:** `@MainActor @Observable final class AppModel` with `rawURL`, `browser`, `braveProfiles: [BraveProfile]`, `braveProfileID: String?`, `preset`, `destination`, `snapshot`, `dependencyReport`; methods `checkDependencies() async`, `refreshBraveProfiles() async`, `preview() async`, `download() async`, `cancel() async`, `selectDestination()`, `revealOutput()`, `shutdown() async`. Inject `BraveProfileProviding`, preference storage, and folder/Finder closures for deterministic model tests. Production preference keys: `destinationPath`, `outputPreset`, and optional `toolPath.ytdlp`, `toolPath.ffmpeg`, `toolPath.ffprobe`, `toolPath.deno`; never persist browser choice, Brave profile, or request data.
 
-- [ ] **Step 1: Write failing model tests.** Start with fresh UserDefaults suite and a previous saved preset/destination; assert they load and browser remains `.none`. Simulate folder-picker cancellation and assert the prior destination survives. During download ensure editing requests do not mutate captured job input. On URL/browser edits invalidate preview; changing output preference alone need not reload metadata. A fake Finder closure receives only the succeeded output URL. Test safe error text and accessible busy/control labels. Run filtered tests and expect failure.
+- [ ] **Step 1: Write failing model tests.** Start with fresh UserDefaults suite and a previous saved preset/destination; assert they load and browser remains `.none` with no profile selected or profile-provider call. Explicit Brave selection loads profile display names, requires a choice, and passes that exact ID to preview/download. Changing profile invalidates preview; stale profile loads after switching away from Brave cannot reselect a profile. Simulate folder-picker cancellation and assert the prior destination survives. During download ensure editing requests do not mutate captured job input. On URL/browser edits invalidate preview; changing output preference alone need not reload metadata. A fake Finder closure receives only the succeeded output URL. Test safe error text and accessible busy/control labels. Run filtered tests and expect failure.
+
+Also test that a queued old `.ready` snapshot arriving while current-input invalidation or replacement starts cannot enable Download for the wrong URL/profile. Keep controls conservatively disabled until current preview identity is established; add the smallest core query/return-value adapter only if the existing operation ID API cannot establish that handshake.
 
 ```swift
 @Test @MainActor func cancellingFolderPickerPreservesDestination() {
@@ -393,11 +427,17 @@ Preview success saves only display metadata and immutable request in memory, not
 
 `AppModelTestHarness.makeModel(folderChoice:)` constructs the model with in-memory preferences, scripted core, and injected folder/Finder callbacks. Keep tests around user behavior rather than view-tree snapshots.
 
-- [ ] **Step 2: Implement the compact window.** Show URL input, browser popup and explanation, preview, metadata card, output segmented control, destination picker, download/cancel, safe status/error, and Finder reveal. Use indeterminate progress where totals are absent and during processing/validation. `AsyncImage` may fetch only validated HTTP(S) thumbnails without forwarding browser cookies. Thumbnail failure falls back to an icon. Truncate long titles visually with full accessible labels; never use text as a format string. Respect dynamic type/keyboard focus. Use fixed safe UI text from the core.
+- [ ] **Step 2: Implement the compact window.** Show URL input, browser popup and explanation, a Brave-only profile picker with “Choose a profile” and display-name/ID labels, preview, metadata card, output segmented control, destination picker, download/cancel, safe status/error, and Finder reveal. Keep profile loading/errors clear and disable Brave-backed preview until a profile is explicitly chosen. Use indeterminate progress where totals are absent and during processing/validation. `AsyncImage` may fetch only validated HTTP(S) thumbnails without forwarding browser cookies. Thumbnail failure falls back to an icon. Truncate long titles visually with full accessible labels; never use text as a format string. Respect dynamic type/keyboard focus. Use fixed safe UI text from the core.
 - [ ] **Step 3: Wire launch and shutdown.** Resolve dependencies at startup; display failures and a retry check. Settings permits absolute tool-path overrides (via file picker) used only for named tools; store paths only and rerun readiness. Do not offer arbitrary flags or run install/update commands. AppKit delegate returns `.terminateLater` while `shutdown()` cancels active work, then calls `reply(toApplicationShouldTerminate: true)` exactly once. Cancel/Quit remain responsive during preview, download, processing, and validation; publishing completes before termination. No automatic preview or cookie extraction at launch.
+
+Construct one shared `AppModel` at app scope, shared by all windows and the quit delegate, or use a single-window scene. Register the shutdown path before dependency subprocesses can start. Opening a new window must not create a new coordinator or reset a latched safety block.
+
+Latch session blocking after `AppIssue.shutdownUnconfirmed` or dependency problem code `shutdown-unconfirmed`. Disable all subprocess-starting checks/previews/downloads for that app session, including settings-triggered checks; changing preferences must not create a new coordinator to bypass it. Keep Quit available and show the fixed safe notice. Test that later dependency rechecks and profile/input changes cannot clear this block.
 - [ ] **Step 4: Run model/core tests and build the app executable.** Expect PASS. Commit `feat: add native preview and download workflow`.
 
 ### Task 8: Assemble the local app and prove real-tool integration
+
+**2026-10-23 direct-Download refinement:** Real loopback MP4/MP3 success and metadata-preparation failure cases run through both direct Download and explicit Preview. Success still requires real artifact verification and exclusive publication; no loopback result proves live-site or browser-cookie support. Final combined verification runs `bash scripts/verify.sh --integration` and `swift build --product MediaDownloader`, with actual counts and permission limits recorded in `docs/VERIFICATION.md`.
 
 **Files:** Create `Resources/Info.plist`, `scripts/build-app.sh`, `scripts/verify.sh`, `scripts/integration.py`, `Tests/DownloaderCoreTests/RealToolIntegrationTests.swift`, `docs/VERIFICATION.md`; update `README.md`.
 
