@@ -1,6 +1,7 @@
 # Verification evidence
 
-Current local evidence includes the Facebook MP4 fix section (2026-10-23), below. Earlier
+Current local evidence includes the Facebook MP4 fix and Instagram extension sections
+(2026-10-23), below. Earlier
 sections retain their original observations and limits. Local automated checks
 and bundle signing are distinct from the controller GUI/public observations and
 remaining live/browser limits recorded below.
@@ -478,3 +479,54 @@ titles/IDs, profile names/IDs, raw metadata and cookie contents were not saved i
 repository evidence. Other documented platform/manual limits remain unchanged.
 See [fix plan and result](bugfixes/2026-10-23-facebook-mp4.md) and
 [independent scoped review](reviews/2026-10-23-facebook-mp4-review.md).
+
+## Instagram progressive MP4 extension (2026-10-23)
+
+The [scoped extension](bugfixes/2026-10-23-instagram-mp4.md) adds parsed
+`instagram.com` and its subdomains to the existing Facebook candidate policy.
+The strict H.264/AAC selector remains first, followed only on these hosts by
+`/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]`. Known incompatible/absent-stream
+labels remain excluded. Actual FFprobe verification and exclusive publication
+remain mandatory. `fb.watch`, `instagr.am`, deceptive hosts, and generic direct
+MP4 inputs retain strict unknown-codec rejection. Coordinator and artifact
+validation code are unchanged.
+
+Before the production change, `bash scripts/test.sh --filter YTDLPCommandsTests`
+exited 1: 15 reported functions in one suite, with five missing-selector failures
+for Instagram apex/subdomains/uppercase/port variants. Facebook, generic strict,
+lookalike/path/query/fragment and rejected-userinfo cases passed. After the minimal
+host-guard change the same command exited 0: 15 functions in 0.005 seconds.
+
+The existing 180×320 compatible H.264/AAC and incompatible MPEG-4/AAC portrait
+fixtures now run for both exact synthetic Facebook and Instagram inputs. The
+test-only runner maps those inputs to loopback after production command building,
+rejecting other inputs and cookie flags. Preview confirms missing codec labels;
+both candidates must complete real FFprobe. Only compatible media publishes;
+incompatible media fails format-unavailable with no publication or staging.
+The generic unknown-codec direct MP4 rejection remains covered.
+
+`python3 scripts/integration.py` before the production change exited 1: six
+functions with four issues in 3.888 seconds. Its summary-only failed-driver policy
+retained one owned synthetic fixture root; no retained root was deleted. After
+the fix the same command exited 0: six functions / fourteen cases in 7.709 seconds.
+
+Final checks on Apple Silicon macOS 26.6.2 with Apple Swift 6.2:
+
+- `bash scripts/verify.sh --integration`: exit 0, run once on final code.
+  ProcessFixture built; its `bash scripts/test.sh` pass reported 154 tests across
+  16 suites in 12.827 seconds. Six real-integration functions and one offline-tool
+  readiness function remain explicit opt-in skips in the default pass. Release
+  bundle and local ad-hoc signature passed; ten Python lifecycle tests passed in
+  10.148 seconds; separately enabled real integration passed six functions /
+  fourteen cases in 4.678 seconds.
+- `swift build --product MediaDownloader`: exit 0, 3.37 seconds.
+- `git diff --check`: passed.
+- Tools: yt-dlp 2026.08.19, FFmpeg/FFprobe 9.0.2, Deno 2.9.7. Checks used approved
+  compiler-cache/process/loopback permissions. No tools were installed or updated.
+
+These automated results prove synthetic selection and artifact/publication
+behavior. This implementer performed no external requests, browser/profile/cookie
+access, or live GUI checks. Controller review and the selected-source native retry
+remain pending at this handoff; no live Instagram support claim follows from
+loopback success. Earlier live observations and their limitations remain recorded
+in their original sections above.

@@ -127,4 +127,38 @@ struct YTDLPCommandsTests {
         let index = try #require(command.arguments.firstIndex(of: "-f"))
         #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
     }
+
+    @Test(arguments: ["https://instagram.com/reel/synthetic", "https://www.instagram.com/reel/synthetic",
+                      "http://m.instagram.com:8080/reel/synthetic", "https://WWW.INSTAGRAM.COM/reel/synthetic",
+                      "https://video.xx.instagram.com/reel/synthetic"])
+    func instagramProgressiveFallbackFollowsStrictSelection(_ url: String) throws {
+        let request = PreviewRequest(rawURL: url, browser: .none)
+        let command = try builder.download(request, preset: .mp4, staging: staging)
+        let index = try #require(command.arguments.firstIndex(of: "-f"))
+        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]")
+        #expect(Array(command.arguments.suffix(2)) == ["--", url])
+        #expect(!command.arguments.contains("--recode-video"))
+        #expect(!command.arguments.contains("--cookies-from-browser"))
+        #expect(try builder.download(request, preset: .mp3, staging: staging).arguments.contains("ba/b"))
+        #expect(try builder.preview(request).arguments.contains("-f") == false)
+    }
+
+    @Test(arguments: ["https://instagram.com.example.org/reel/synthetic", "https://notinstagram.com/reel/synthetic",
+                      "https://instagram.com./reel/synthetic", "https://instagr.am/synthetic",
+                      "https://example.org/instagram.com?url=https://instagram.com/reel/synthetic",
+                      "https://example.org/video#instagram.com", "https://instagrаm.com/reel/synthetic"])
+    func instagramFallbackDoesNotAdmitLookalikesOrRedirectDomains(_ url: String) throws {
+        let command = try builder.download(.init(rawURL: url, browser: .none), preset: .mp4, staging: staging)
+        let index = try #require(command.arguments.firstIndex(of: "-f"))
+        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
+    }
+
+    @Test(arguments: ["https://instagram.com@example.org/reel/synthetic",
+                      "https://example.org@instagram.com/reel/synthetic"])
+    func instagramHostPolicyRejectsUserinfo(_ url: String) {
+        #expect(throws: AppIssue.invalidURL) {
+            try builder.download(.init(rawURL: url, browser: .none), preset: .mp4, staging: staging)
+        }
+    }
+
 }

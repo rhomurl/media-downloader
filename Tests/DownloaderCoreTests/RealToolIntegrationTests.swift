@@ -45,13 +45,13 @@ struct RealToolIntegrationTests {
         }
     }
 
-    @Test(arguments: [true, false])
-    func facebookUnknownCodecPortraitCandidateRequiresArtifactValidation(compatible: Bool) async throws {
+    @Test(arguments: SocialLoopbackRunner.sources, [true, false])
+    func socialUnknownCodecPortraitCandidateRequiresArtifactValidation(source: String, compatible: Bool) async throws {
         let path = compatible ? "portrait-compatible.mp4" : "portrait-incompatible.mp4"
-        try await withRealIntegrationHarness(mappedFacebookPath: path) { h in
+        try await withRealIntegrationHarness(mappedCandidate: (source, path)) { h in
             // Reserved synthetic input is never fetched: only the test runner
             // maps it to loopback, after the production builder selects policy.
-            await h.coordinator.preview(.init(rawURL: FacebookLoopbackRunner.source, browser: .none))
+            await h.coordinator.preview(.init(rawURL: source, browser: .none))
             #expect(try await h.waitFor([.ready, .failed]).phase == .ready)
             #expect(await h.mappingRunner?.previewHadUnlabelledMP4 == true)
             await h.coordinator.download(preset: .mp4, destination: h.destination)
@@ -113,8 +113,8 @@ struct RealToolIntegrationTests {
 
 // Even a timeout or failed #require must join owned subprocesses/readers before
 // deleting this test's destination. Preserve staging on uncertain shutdown.
-private func withRealIntegrationHarness(mappedFacebookPath: String? = nil, _ body: (RealIntegrationHarness) async throws -> Void) async throws {
-    let harness = try RealIntegrationHarness(mappedFacebookPath: mappedFacebookPath)
+private func withRealIntegrationHarness(mappedCandidate: (source: String, path: String)? = nil, _ body: (RealIntegrationHarness) async throws -> Void) async throws {
+    let harness = try RealIntegrationHarness(mappedCandidate: mappedCandidate)
     do {
         try await body(harness)
     } catch {
@@ -132,8 +132,8 @@ private struct RealIntegrationHarness {
     let coordinator: JobCoordinator
     let destination: URL
     private let base: URL
-    let mappingRunner: FacebookLoopbackRunner?
-    init(mappedFacebookPath: String? = nil) throws {
+    let mappingRunner: SocialLoopbackRunner?
+    init(mappedCandidate: (source: String, path: String)? = nil) throws {
         let supplied = try #require(integrationEnvironment["MEDIA_DOWNLOADER_INTEGRATION_URL"])
         let parsed = try #require(URL(string: supplied))
         guard parsed.scheme == "http", parsed.host == "127.0.0.1", parsed.port != nil,
@@ -145,8 +145,9 @@ private struct RealIntegrationHarness {
             return URL(fileURLWithPath: path)
         }
         tools = try .init(ytdlp: tool("YTDLP"), ffmpeg: tool("FFMPEG"), ffprobe: tool("FFPROBE"), deno: tool("DENO"))
-        if let mappedFacebookPath {
-            let mapping = FacebookLoopbackRunner(tools: tools, loopback: base.appendingPathComponent(mappedFacebookPath).absoluteString)
+        if let mappedCandidate {
+            let mapping = SocialLoopbackRunner(tools: tools, source: mappedCandidate.source,
+                loopback: base.appendingPathComponent(mappedCandidate.path).absoluteString)
             mappingRunner = mapping
             coordinator = JobCoordinator(runner: mapping, tools: tools)
         } else {
@@ -176,22 +177,26 @@ private struct RealIntegrationHarness {
 
 // Test-only source mapping keeps the coordinator, command builder, yt-dlp format
 // selector, process supervision, files and FFprobe real. No production test hooks.
-private actor FacebookLoopbackRunner: ProcessRunning {
-    static let source = "https://media-downloader-fixture.facebook.com/reel/synthetic"
+private actor SocialLoopbackRunner: ProcessRunning {
+    static let sources = ["https://media-downloader-fixture.facebook.com/reel/synthetic",
+                          "https://media-downloader-fixture.instagram.com/reel/synthetic"]
+    let source: String
     let tools: ResolvedTools
     let loopback: String
     let runner = ProcessRunner()
     var completedProbes = 0
     var previewHadUnlabelledMP4 = false
 
-    init(tools: ResolvedTools, loopback: String) { self.tools = tools; self.loopback = loopback }
+    init(tools: ResolvedTools, source: String, loopback: String) {
+        self.tools = tools; self.source = source; self.loopback = loopback
+    }
 
     func run(_ command: ProcessCommand,
              onLine: @escaping @Sendable (ProcessLine) async -> Void) async throws -> ProcessResult {
         var arguments = command.arguments
         if command.executable == tools.ytdlp {
             // Fail before launching for any request outside this exact fixture.
-            guard Array(arguments.suffix(2)) == ["--", Self.source],
+            guard Self.sources.contains(source), Array(arguments.suffix(2)) == ["--", source],
                   !arguments.contains("--cookies-from-browser") else { throw AppIssue.invalidURL }
             arguments[arguments.count - 1] = loopback
         }

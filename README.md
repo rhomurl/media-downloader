@@ -26,12 +26,12 @@ validation and exclusive publication; Show in Finder reveals the returned file.
 Only destination, output preset, and tool overrides are saved.
 
 MP4 requires source H.264 video plus AAC audio and uses merge/remux without video
-transcoding. Selection first requires labelled compatible streams. For `facebook.com`
-and its subdomains, progressive MP4 candidates may have missing codec labels;
-actual FFprobe H.264/AAC validation still gates publication. Known incompatible
+transcoding. Selection first requires labelled compatible streams. For parsed hosts
+`facebook.com` and `instagram.com`, and their subdomains, progressive MP4 candidates
+may have missing codec labels; actual FFprobe H.264/AAC validation still gates publication. Known incompatible
 labels are excluded, and an incompatible downloaded artifact is discarded with a
-format-unavailable error. Other hosts, including `fb.watch`, retain strict unknown-
-codec rejection even for a direct file ending in `.mp4`. Missing compatible streams
+format-unavailable error. Other hosts, including `fb.watch` and `instagr.am`, retain
+strict unknown-codec rejection even for a direct file ending in `.mp4`. Missing compatible streams
 also produce format unavailable. MP3 uses FFmpeg conversion at VBR quality 2;
 conversion does not improve source fidelity. Missing
 media fragments fail the job rather than publish a playable partial file. Final
@@ -51,7 +51,7 @@ and builds and verifies the local release bundle. Default verification skips the
 real-tool suite explicitly. `--integration` additionally generates synthetic
 H.264/AAC HLS media in an owned temporary directory, serves it on an ephemeral
 127.0.0.1 port, and exercises real yt-dlp/FFmpeg/FFprobe through the coordinator.
-It checks MP4/MP3 outputs, strict generic unknown-codec rejection, the Facebook-only
+It checks MP4/MP3 outputs, strict generic unknown-codec rejection, the Facebook/Instagram
 exception with compatible/incompatible portrait MP4s, and failures without publication.
 The integration branch first runs synthetic harness lifecycle regressions.
 Python 3 is required for this development-only integration harness. No site URLs,

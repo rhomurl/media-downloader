@@ -27,8 +27,9 @@ public struct YTDLPCommands: Sendable {
         case .mp4:
             var selector = "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]"
             let host = try URLValidator.validate(request.rawURL).host?.lowercased() ?? ""
-            if host == "facebook.com" || host.hasSuffix(".facebook.com") {
-                // Facebook progressive MP4 entries may omit codec labels. This
+            if host == "facebook.com" || host.hasSuffix(".facebook.com")
+                || host == "instagram.com" || host.hasSuffix(".instagram.com") {
+                // Facebook/Instagram progressive MP4 entries may omit codec labels. This
                 // candidate still requires actual H.264/AAC artifact verification.
                 selector += "/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]"
             }
