@@ -26,7 +26,9 @@ validation and exclusive publication; Show in Finder reveals the returned file.
 Only destination, output preset, and tool overrides are saved.
 
 MP4 requires source H.264 video plus AAC audio and uses merge/remux without video
-transcoding. Selection first requires labelled compatible streams. For parsed hosts
+transcoding. Selection first requires labelled compatible streams: `avc1`/`mp4a`
+prefixes or exact `h264`/`aac` aliases, including mixed labels. TikTok uses this
+strict policy; unknown labels and alias lookalikes remain excluded. For parsed hosts
 `facebook.com` and `instagram.com`, and their subdomains, progressive MP4 candidates
 may have missing codec labels; actual FFprobe H.264/AAC validation still gates publication. Known incompatible
 labels are excluded, and an incompatible downloaded artifact is discarded with a
@@ -52,7 +54,9 @@ real-tool suite explicitly. `--integration` additionally generates synthetic
 H.264/AAC HLS media in an owned temporary directory, serves it on an ephemeral
 127.0.0.1 port, and exercises real yt-dlp/FFmpeg/FFprobe through the coordinator.
 It checks MP4/MP3 outputs, strict generic unknown-codec rejection, the Facebook/Instagram
-exception with compatible/incompatible portrait MP4s, and failures without publication.
+exception with compatible/incompatible portrait MP4s, real yt-dlp alias selection
+using synthetic info JSON, alias-labelled portrait downloads with actual artifact
+validation, and failures without publication.
 The integration branch first runs synthetic harness lifecycle regressions.
 Python 3 is required for this development-only integration harness. No site URLs,
 browser cookies, or external network are needed. Versions and test summaries are

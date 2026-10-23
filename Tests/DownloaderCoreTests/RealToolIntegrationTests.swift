@@ -11,6 +11,58 @@ private let integrationEnabled = integrationEnvironment["MEDIA_DOWNLOADER_INTEGR
 @Suite(.enabled(if: integrationEnabled,
     "Opt-in loopback integration requires MEDIA_DOWNLOADER_INTEGRATION_URL and absolute YTDLP/FFMPEG/FFPROBE/DENO tool paths; run bash scripts/verify.sh --integration."))
 struct RealToolIntegrationTests {
+    // These cases catch aliases accidentally omitted or accepted by prefix.
+    // Selection runs the installed yt-dlp against generated synthetic info JSON.
+    @Test(.serialized, arguments: [["avc1.64001f", "mp4a.40.2"], ["avc1", "mp4a"],
+                                  ["h264", "aac"], ["avc1.64001f", "aac"], ["h264", "mp4a.40.2"]],
+          [false, true])
+    func realSelectorAcceptsVerifiedAliases(labels: [String], separate: Bool) async throws {
+        for source in SelectorFixture.strictSources {
+            let result = try await SelectorFixture.select(source: source, labels: labels, separate: separate)
+            #expect(result.exitCode == 0)
+            #expect(result.selected == (separate ? "video+audio" : "combined"))
+        }
+    }
+
+    @Test(.serialized, arguments: [["h265", "aac"], ["hevc", "aac"], ["av01.0.00M.08", "aac"],
+                                  ["av1", "aac"], ["vp9", "aac"], ["none", "aac"],
+                                  ["h264junk", "aac"], ["<missing>", "aac"], ["<null>", "aac"],
+                                  ["h264", "opus"], ["h264", "none"], ["h264", "aacjunk"],
+                                  ["h264", "<missing>"], ["h264", "<null>"],
+                                  ["<missing>", "<missing>"], ["<null>", "<null>"]], [false, true])
+    func realSelectorRejectsUnknownIncompatibleAndLookalikeLabels(labels: [String], separate: Bool) async throws {
+        for source in SelectorFixture.strictSources {
+            let result = try await SelectorFixture.select(source: source, labels: labels, separate: separate)
+            #expect(result.exitCode != 0)
+            #expect(result.selected == nil)
+        }
+    }
+
+    @Test(arguments: [true, false])
+    func aliasLabelledPortraitCandidateRequiresRealArtifactValidation(compatible: Bool) async throws {
+        let path = compatible ? "portrait-compatible.mp4" : "portrait-incompatible.mp4"
+        try await withRealIntegrationHarness(mappedCandidate: (SelectorFixture.strictSources[1], path),
+                                              aliasLabels: true) { h in
+            await h.coordinator.preview(.init(rawURL: SelectorFixture.strictSources[1], browser: .none))
+            #expect(try await h.waitFor([.ready, .failed]).phase == .ready)
+            await h.coordinator.download(preset: .mp4, destination: h.destination)
+            let result = try await h.waitFor([.succeeded, .failed, .cancelled])
+            #expect(await h.mappingRunner?.loadedAliasFixture == true)
+            #expect(await h.mappingRunner?.completedProbes == 1)
+            if compatible {
+                #expect(result.phase == .succeeded && result.issue == nil)
+                let output = try #require(result.output)
+                try await ArtifactVerifier(runner: ProcessRunner(), tools: h.tools).verify(output, preset: .mp4)
+                #expect(try h.contents().map { $0.resolvingSymlinksInPath().path }
+                    == [output.resolvingSymlinksInPath().path])
+            } else {
+                #expect(result.phase == .failed && result.issue == .formatUnavailable)
+                #expect(result.output == nil)
+                #expect(try h.contents().isEmpty)
+            }
+        }
+    }
+
     @Test(arguments: [OutputPreset.mp4, .mp3])
     func realCoordinatorPublishesVerifiedOutput(preset: OutputPreset) async throws {
         try await withRealIntegrationHarness { h in
@@ -113,8 +165,8 @@ struct RealToolIntegrationTests {
 
 // Even a timeout or failed #require must join owned subprocesses/readers before
 // deleting this test's destination. Preserve staging on uncertain shutdown.
-private func withRealIntegrationHarness(mappedCandidate: (source: String, path: String)? = nil, _ body: (RealIntegrationHarness) async throws -> Void) async throws {
-    let harness = try RealIntegrationHarness(mappedCandidate: mappedCandidate)
+private func withRealIntegrationHarness(mappedCandidate: (source: String, path: String)? = nil, aliasLabels: Bool = false, _ body: (RealIntegrationHarness) async throws -> Void) async throws {
+    let harness = try RealIntegrationHarness(mappedCandidate: mappedCandidate, aliasLabels: aliasLabels)
     do {
         try await body(harness)
     } catch {
@@ -133,7 +185,7 @@ private struct RealIntegrationHarness {
     let destination: URL
     private let base: URL
     let mappingRunner: SocialLoopbackRunner?
-    init(mappedCandidate: (source: String, path: String)? = nil) throws {
+    init(mappedCandidate: (source: String, path: String)? = nil, aliasLabels: Bool = false) throws {
         let supplied = try #require(integrationEnvironment["MEDIA_DOWNLOADER_INTEGRATION_URL"])
         let parsed = try #require(URL(string: supplied))
         guard parsed.scheme == "http", parsed.host == "127.0.0.1", parsed.port != nil,
@@ -147,7 +199,7 @@ private struct RealIntegrationHarness {
         tools = try .init(ytdlp: tool("YTDLP"), ffmpeg: tool("FFMPEG"), ffprobe: tool("FFPROBE"), deno: tool("DENO"))
         if let mappedCandidate {
             let mapping = SocialLoopbackRunner(tools: tools, source: mappedCandidate.source,
-                loopback: base.appendingPathComponent(mappedCandidate.path).absoluteString)
+                loopback: base.appendingPathComponent(mappedCandidate.path).absoluteString, aliasLabels: aliasLabels)
             mappingRunner = mapping
             coordinator = JobCoordinator(runner: mapping, tools: tools)
         } else {
@@ -184,11 +236,14 @@ private actor SocialLoopbackRunner: ProcessRunning {
     let tools: ResolvedTools
     let loopback: String
     let runner = ProcessRunner()
+    let aliasLabels: Bool
+    var loadedAliasFixture = false
     var completedProbes = 0
     var previewHadUnlabelledMP4 = false
 
-    init(tools: ResolvedTools, source: String, loopback: String) {
+    init(tools: ResolvedTools, source: String, loopback: String, aliasLabels: Bool = false) {
         self.tools = tools; self.source = source; self.loopback = loopback
+        self.aliasLabels = aliasLabels
     }
 
     func run(_ command: ProcessCommand,
@@ -196,9 +251,21 @@ private actor SocialLoopbackRunner: ProcessRunning {
         var arguments = command.arguments
         if command.executable == tools.ytdlp {
             // Fail before launching for any request outside this exact fixture.
-            guard Self.sources.contains(source), Array(arguments.suffix(2)) == ["--", source],
+            guard (aliasLabels ? source == SelectorFixture.strictSources[1] : Self.sources.contains(source)),
+                  Array(arguments.suffix(2)) == ["--", source],
                   !arguments.contains("--cookies-from-browser") else { throw AppIssue.invalidURL }
-            arguments[arguments.count - 1] = loopback
+            if aliasLabels && !arguments.contains("--dump-single-json") {
+                let output = try #require(arguments.firstIndex(of: "-o"))
+                let staging = URL(fileURLWithPath: arguments[output + 1]).deletingLastPathComponent()
+                let fixture = staging.appendingPathComponent("synthetic-alias.info.json")
+                try SelectorFixture.metadata(labels: ["h264", "aac"], separate: false, mediaURL: loopback)
+                    .write(to: fixture, options: .atomic)
+                arguments.removeLast(2)
+                arguments += ["--load-info-json", fixture.path]
+                loadedAliasFixture = true
+            } else {
+                arguments[arguments.count - 1] = loopback
+            }
         }
         let mapped = ProcessCommand(executable: command.executable, arguments: arguments,
             environment: command.environment, timeout: command.timeout, maximumLineBytes: command.maximumLineBytes)
@@ -219,6 +286,61 @@ private actor SocialLoopbackRunner: ProcessRunning {
             $0["ext"] as? String == "mp4"
                 && ($0["vcodec"] == nil || $0["vcodec"] is NSNull)
                 && ($0["acodec"] == nil || $0["acodec"] is NSNull)
+        }
+    }
+}
+
+// Only metadata is synthetic: yt-dlp's selector and all media/probe/final events
+// are real. Selector-only simulations never fetch their loopback placeholder.
+private enum SelectorFixture {
+    static let strictSources = ["https://video.example.test/synthetic.mp4",
+                                "https://media-downloader-fixture.tiktok.com/synthetic"]
+
+    static func metadata(labels: [String], separate: Bool, mediaURL: String) throws -> Data {
+        func format(_ id: String, video: String, audio: String) -> [String: Any] {
+            var value: [String: Any] = ["format_id": id, "url": mediaURL, "ext": "mp4"]
+            for (key, codec) in [("vcodec", video), ("acodec", audio)] {
+                if codec == "<null>" { value[key] = NSNull() }
+                else if codec != "<missing>" { value[key] = codec }
+            }
+            return value
+        }
+        let formats = separate
+            ? [format("video", video: labels[0], audio: "none"),
+               format("audio", video: "none", audio: labels[1])]
+            : [format("combined", video: labels[0], audio: labels[1])]
+        return try JSONSerialization.data(withJSONObject: ["id": "synthetic", "title": "Synthetic codec fixture",
+            "extractor": "synthetic", "webpage_url": "https://video.example.test/synthetic", "formats": formats])
+    }
+
+    static func select(source: String, labels: [String], separate: Bool) async throws -> (exitCode: Int32, selected: String?) {
+        let root = try TestSupport.temporaryDirectory()
+        var cleanupConfirmed = true
+        defer { if cleanupConfirmed { try? FileManager.default.removeItem(at: root) } }
+        let fixture = root.appendingPathComponent("selector.info.json")
+        try metadata(labels: labels, separate: separate, mediaURL: "http://127.0.0.1:9/synthetic.mp4")
+            .write(to: fixture)
+        let harness = try RealIntegrationHarness()
+        defer { harness.remove() } // This harness's coordinator never starts a process.
+        let production = try YTDLPCommands(tools: harness.tools).download(.init(rawURL: source, browser: .none),
+            preset: .mp4, staging: root)
+        var arguments = Array(production.arguments.dropLast(2))
+        // Later --simulate overrides production --no-simulate. Its actual -f
+        // expression and safety flags are kept; no source URL is fetched.
+        arguments += ["--simulate", "--skip-download", "--load-info-json", fixture.path,
+                      "--print", "SELECTED:%(format_id)s"]
+        let command = ProcessCommand(executable: production.executable, arguments: arguments,
+            environment: production.environment, timeout: .seconds(20), maximumLineBytes: production.maximumLineBytes)
+        let sink = TestLineSink()
+        do {
+            let result = try await ProcessRunner().run(command) { await sink.accept($0) }
+            let selected = await sink.lines().first { $0.stream == .stdout
+                && String(decoding: $0.bytes, as: UTF8.self).hasPrefix("SELECTED:") }
+                .map { String(String(decoding: $0.bytes, as: UTF8.self).dropFirst("SELECTED:".count)) }
+            return (result.exitCode, selected)
+        } catch {
+            if case ProcessFailure.shutdownUnconfirmed = error { cleanupConfirmed = false }
+            throw error
         }
     }
 }

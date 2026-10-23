@@ -25,7 +25,7 @@ public struct YTDLPCommands: Sendable {
         ]
         switch preset {
         case .mp4:
-            var selector = "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]"
+            var selector = "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']"
             let host = try URLValidator.validate(request.rawURL).host?.lowercased() ?? ""
             if host == "facebook.com" || host.hasSuffix(".facebook.com")
                 || host == "instagram.com" || host.hasSuffix(".instagram.com") {

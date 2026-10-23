@@ -21,7 +21,7 @@ The approved approach uses SwiftUI, external Homebrew tools, one active job, and
 
 ## Output contract
 
-MP4 means H.264 video with AAC audio, selected from source formats and merged/remuxed without video transcoding. Use the best available compatible resolution; no resolution selector in the first slice. If the required streams are absent, report that this preset is unavailable. Sources without an audio stream are outside this initial MP4 preset.
+MP4 means H.264 video with AAC audio, selected from source formats and merged/remuxed without video transcoding. Verified source labels are existing `avc1`/`mp4a` prefixes plus exact `h264`/`aac` aliases (2026-10-23 correction); mixed labels and separate or combined streams are eligible. Alias lookalikes and unknown labels remain ineligible under strict selection, including for TikTok. Actual artifact validation remains mandatory. Use the best available compatible resolution; no resolution selector in the first slice. If the required streams are absent, report that this preset is unavailable. Sources without an audio stream are outside this initial MP4 preset.
 
 Approved correction (2026-10-23): retain strict labelled H.264/AAC selection first.
 For parsed HTTP(S) hosts equal to `facebook.com` or `instagram.com`, or a subdomain

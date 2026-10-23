@@ -550,3 +550,55 @@ required or that other/private-only sources will work. Synthetic integration and
 prior manual-platform limits remain distinct.
 
 Independent [scoped review](reviews/2026-10-23-instagram-mp4-review.md) approved spec compliance and quality with no findings. Its pending native retry item is closed by the controller evidence above; inherited baseline safety limits remain explicit.
+
+
+## TikTok codec-label aliases (2026-10-23)
+
+The controller diagnosed a selected TikTok source whose preview succeeded with
+browser None but whose MP4 selection failed: its source labels were `h264`/`aac`,
+while strict selection admitted only `avc1`/`mp4a` prefixes. An owned,
+non-publishing diagnostic passed the normal real ArtifactVerifier. No actual
+source URL, title, format ID, raw metadata, or diagnostics are recorded here.
+
+The correction adds only exact `h264`/`aac` aliases to the existing labelled
+selector. Mixed labels, separate streams and combined streams are eligible.
+The Facebook/Instagram-only trailing selector is unchanged. TikTok and generic
+sources still reject unknown codecs. Actual H.264/AAC artifact validation,
+merge/remux without video transcoding, and exclusive publication remain required.
+
+Task 1 checks used normal compiler-cache, subprocess and loopback permissions:
+
+- Before production changes, `bash scripts/test.sh --filter YTDLPCommandsTests`
+  failed: 15 reported functions, 26 old-selector assertions. A selector-only
+  synthetic-info rerun of `realSelectorAcceptsVerifiedAliases` inspected actual
+  installed yt-dlp results: one function / ten parameter cases failed with 24
+  assertions. Exact aliases and both mixed pairs failed for combined/separate
+  streams under generic and TikTok policy; existing prefix labels selected.
+- Before the fix, `python3 scripts/integration.py` failed: nine functions,
+  28 issues in 19.689 seconds. Its failed-driver policy retained its owned
+  synthetic fixture root; no retained root was deleted.
+- After the fix, `bash scripts/test.sh --filter YTDLPCommandsTests` passed:
+  15 functions in 0.005 seconds. The actual production regex is exercised by
+  real yt-dlp, beyond these command-string assertions.
+- After the fix, `python3 scripts/integration.py` passed: nine functions /
+  58 parameter cases in 29.107 seconds, including 84 real selector evaluations
+  across generic and synthetic TikTok inputs. `avc1`/`mp4a` prefixes, exact
+  `h264`/`aac`, both mixed pairs and combined/separate streams select; H.265,
+  HEVC, AV1, VP9, Opus, `none`, missing/null and `h264junk`/`aacjunk` labels do not.
+  Existing Facebook/Instagram unknown-label cases and generic rejection pass.
+- The alias-labelled portrait pair uses generated synthetic info JSON loaded
+  after production argv construction. Real yt-dlp downloads the loopback bytes
+  and emits actual final events; real FFprobe runs for both variants. H.264/AAC
+  publishes and re-verifies at its final path. Falsely labelled MPEG-4/AAC fails
+  format-unavailable with no output or staging left. No probe/process/final-path
+  events are fabricated. Metadata fixtures stay inside owned test roots.
+- Tool versions: yt-dlp 2026.08.19, FFmpeg/FFprobe 9.0.2, Deno 2.9.7.
+  No tool installs or updates occurred. `git diff --check` passed.
+
+Full unit/process/model, explicit app build, release-bundle and harness-lifecycle
+verification are deferred to Task 2's final combined run by the scoped plan.
+These Task 1 results establish synthetic selection and real loopback artifact
+behavior. This implementer made no external media request or browser/profile/
+cookie access. The selected TikTok source's native retry remains pending;
+loopback success does not establish live TikTok support. Existing private-source,
+GUI, macOS/architecture and distribution limits remain unchanged.

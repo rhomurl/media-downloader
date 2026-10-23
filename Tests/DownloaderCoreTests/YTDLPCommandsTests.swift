@@ -71,7 +71,7 @@ struct YTDLPCommandsTests {
         let command = try builder.download(request, preset: .mp4, staging: staging)
         #expect(command.timeout == nil)
         #expect(command.maximumLineBytes == 65_536)
-        for value in ["--no-simulate", "--newline", "--progress", "--no-overwrites", "--no-post-overwrites", #"download:MD_DOWNLOAD:{"progress":%(progress)j,"stream_id":%(info.format_id|"")j}"#, "postprocess:MD_POSTPROCESS:%(progress)j", "after_move:MD_FINAL:%(filepath)j", "/synthetic/destination/.job-staging/media.%(ext)s", "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]"] {
+        for value in ["--no-simulate", "--newline", "--progress", "--no-overwrites", "--no-post-overwrites", #"download:MD_DOWNLOAD:{"progress":%(progress)j,"stream_id":%(info.format_id|"")j}"#, "postprocess:MD_POSTPROCESS:%(progress)j", "after_move:MD_FINAL:%(filepath)j", "/synthetic/destination/.job-staging/media.%(ext)s", "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']"] {
             #expect(command.arguments.contains(value))
         }
         #expect(command.arguments.contains("--abort-on-unavailable-fragments"))
@@ -99,7 +99,7 @@ struct YTDLPCommandsTests {
         _ = try MetadataDecoder.decode(TestSupport.fixture("single-video"))
         let command = try builder.download(PreviewRequest(rawURL: "https://example.com/direct.mp4", browser: .none), preset: .mp4, staging: staging)
         let format = try #require(command.arguments.firstIndex(of: "-f"))
-        #expect(command.arguments[format + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
+        #expect(command.arguments[format + 1] == "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']")
         #expect(!command.arguments.contains("--recode-video"))
     }
     @Test(arguments: ["https://facebook.com/reel/synthetic", "https://www.facebook.com/reel/synthetic",
@@ -109,7 +109,7 @@ struct YTDLPCommandsTests {
         let request = PreviewRequest(rawURL: url, browser: .none)
         let command = try builder.download(request, preset: .mp4, staging: staging)
         let index = try #require(command.arguments.firstIndex(of: "-f"))
-        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]")
+        #expect(command.arguments[index + 1] == "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]")
         #expect(Array(command.arguments.suffix(2)) == ["--", url])
         #expect(!command.arguments.contains("--recode-video"))
         #expect(!command.arguments.contains("--cookies-from-browser"))
@@ -125,7 +125,7 @@ struct YTDLPCommandsTests {
     func facebookFallbackDoesNotAdmitLookalikesOrRedirectDomains(_ url: String) throws {
         let command = try builder.download(.init(rawURL: url, browser: .none), preset: .mp4, staging: staging)
         let index = try #require(command.arguments.firstIndex(of: "-f"))
-        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
+        #expect(command.arguments[index + 1] == "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']")
     }
 
     @Test(arguments: ["https://instagram.com/reel/synthetic", "https://www.instagram.com/reel/synthetic",
@@ -135,7 +135,7 @@ struct YTDLPCommandsTests {
         let request = PreviewRequest(rawURL: url, browser: .none)
         let command = try builder.download(request, preset: .mp4, staging: staging)
         let index = try #require(command.arguments.firstIndex(of: "-f"))
-        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]")
+        #expect(command.arguments[index + 1] == "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]")
         #expect(Array(command.arguments.suffix(2)) == ["--", url])
         #expect(!command.arguments.contains("--recode-video"))
         #expect(!command.arguments.contains("--cookies-from-browser"))
@@ -150,7 +150,7 @@ struct YTDLPCommandsTests {
     func instagramFallbackDoesNotAdmitLookalikesOrRedirectDomains(_ url: String) throws {
         let command = try builder.download(.init(rawURL: url, browser: .none), preset: .mp4, staging: staging)
         let index = try #require(command.arguments.firstIndex(of: "-f"))
-        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
+        #expect(command.arguments[index + 1] == "bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']")
     }
 
     @Test(arguments: ["https://instagram.com@example.org/reel/synthetic",

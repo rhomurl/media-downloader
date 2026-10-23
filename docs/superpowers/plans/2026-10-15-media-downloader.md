@@ -271,11 +271,11 @@ The download envelope gets stream ID from `info.format_id`, not from `progress.i
 MP4 selector and options:
 
 ```text
--f bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]
+-f bv[vcodec~='^(avc1.*|h264)$']+ba[acodec~='^(mp4a.*|aac)$']/b[vcodec~='^(avc1.*|h264)$'][acodec~='^(mp4a.*|aac)$']
 --merge-output-format mp4 --remux-video mp4
 ```
 
-The selector is intentionally strict; if an extractor uses alternative codec labels, add only verified H.264/AAC aliases with selector fixtures and artifact checks. Unknown codec metadata does not establish compatibility and can yield format-unavailable even for a direct MP4 URL; pin this behavior in fixtures.
+The selector is intentionally strict. The 2026-10-23 correction admits exact `h264`/`aac` aliases alongside existing `avc1`/`mp4a` prefixes, including mixed labels and separate or combined streams. Real yt-dlp synthetic-info selection and actual loopback artifact checks cover these aliases; strings such as `h264junk`/`aacjunk` are excluded. No TikTok unknown-label fallback is added. Future alternative codec labels require verified H.264/AAC aliases with selector fixtures and artifact checks. Unknown codec metadata does not establish compatibility and can yield format-unavailable even for a direct MP4 URL; pin this behavior in fixtures.
 
 Approved scoped exception (2026-10-23): after the strict selector above, append
 `/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]` only when the validated HTTP(S) URL host
