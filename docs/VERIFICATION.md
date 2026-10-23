@@ -445,3 +445,36 @@ public/GUI observations do not prove this Facebook fix. The installed extractor
 and this selected source motivated the exception; availability for other Facebook
 videos, `fb.watch`, private sources, browser permission flows, other macOS versions
 or architectures, and distribution are not established by these checks.
+
+## Facebook portrait MP4 correction (2026-10-23)
+
+The selected Facebook reel had labelled AV1/AAC streams plus progressive SD/HD
+MP4 entries lacking codec labels. The original selector refused those entries;
+a non-publishing diagnostic confirmed its HD artifact satisfies H.264/AAC.
+Commit `c5b5728` preserves strict-first selection and permits unknown-label
+progressive MP4 candidates only for parsed facebook.com/subdomain hosts. Actual
+FFprobe verification remains mandatory; known incompatible labels are excluded,
+and incompatible artifacts fail format-unavailable without publication. Generic
+unknown-codec/direct-MP4 behavior remains strict.
+
+Observed checks: focused TDD RED/GREEN, 151 reported Swift tests across 16 suites
+(11.152 seconds in combined verification, seven explicit opt-in skips), native
+build, signed release bundle, ten Python lifecycle tests (10.100 seconds), and
+six enabled real integration functions / twelve cases (2.219 seconds) passed.
+Two synthetic fixture roots from genuine RED runs were retained under the
+existing failed-driver policy. No actual user data is in those fixtures.
+
+The controller's native retry of the same source with the user's previously
+explicitly selected Brave profile succeeded through preview/download. Show in
+Finder selected the completed file in Downloads. FFprobe of that exact file:
+MP4-family container, 720×1280 H.264 video, AAC audio, 109.897188 seconds,
+29,130,743 bytes. No video conversion was used. The local app was rebuilt and
+ad-hoc signature verified. No runtime tools were installed or updated.
+
+This adds actual selected-profile cookie-enabled Facebook evidence to the prior
+public YouTube evidence. It does not prove the source requires login, all private
+sources work, or every Facebook profile/site/runtime version works. URLs, source
+titles/IDs, profile names/IDs, raw metadata and cookie contents were not saved in
+repository evidence. Other documented platform/manual limits remain unchanged.
+See [fix plan and result](bugfixes/2026-10-23-facebook-mp4.md) and
+[independent scoped review](reviews/2026-10-23-facebook-mp4-review.md).

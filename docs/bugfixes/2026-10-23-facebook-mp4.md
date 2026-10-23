@@ -64,3 +64,25 @@ progressive entries. Selector missing-value syntax was exercised offline with
 that installed version: unlabelled MP4 accepted; known AV1, Opus and no-audio
 rejected; labelled H.264/AAC retained. All observations apply to this selected
 source and installed tools, not every Facebook video.
+
+## Result
+
+Implemented in `c5b5728`; scoped independent review approved spec compliance and
+code quality with no findings. The combined verification passed 151 reported
+Swift tests (seven explicit opt-in functions skipped in the default pass), ten
+Python harness tests, six enabled integration functions / twelve cases, native
+build, release bundle and local ad-hoc signature verification. Real portrait
+loopback tests prove compatible unknown-label candidates publish and incompatible
+candidates reach FFprobe, fail format-unavailable, and publish nothing.
+
+The controller retried the same failing reel through the rebuilt native app with
+the user's already selected Brave profile: preview and MP4 download succeeded.
+Show in Finder selected the actual published file in Downloads. Independent
+FFprobe at that path confirmed 720×1280 H.264 video, AAC audio, MP4-family container,
+109.897188 seconds, 29,130,743 bytes. No transcoding, profile persistence, actual
+source URL/title/profile ID, raw metadata, or cookies are recorded here. This
+verifies this selected cookie-enabled source; whether login was strictly required
+is not established, and private-only sources remain separate verification.
+
+Sources: [upstream Facebook extraction](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/facebook.py)
+and [format filter semantics](https://github.com/yt-dlp/yt-dlp#filtering-formats).
