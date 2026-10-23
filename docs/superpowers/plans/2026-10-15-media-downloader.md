@@ -275,7 +275,23 @@ MP4 selector and options:
 --merge-output-format mp4 --remux-video mp4
 ```
 
-The selector is intentionally strict; if an extractor uses alternative codec labels, add only verified H.264/AAC aliases with selector fixtures and artifact checks. Unknown codec metadata does not establish compatibility and can yield format-unavailable even for a direct MP4 URL; pin this behavior in fixtures. Do not expand to arbitrary codec fallback or use `--recode-video`. MP3 uses `-f ba/b -x --audio-format mp3 --audio-quality 2`. No `--ignore-errors`, remote component downloads, or shell `--exec` hooks.
+The selector is intentionally strict; if an extractor uses alternative codec labels, add only verified H.264/AAC aliases with selector fixtures and artifact checks. Unknown codec metadata does not establish compatibility and can yield format-unavailable even for a direct MP4 URL; pin this behavior in fixtures.
+
+Approved scoped exception (2026-10-23): after the strict selector above, append
+`/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]` only when the validated HTTP(S) URL host
+is `facebook.com` or a subdomain. Facebook progressive MP4 entries can omit codec
+labels; known incompatible/absent-stream labels remain excluded. `fb.watch`,
+lookalike hosts, and every other host retain strict policy. Never inspect arbitrary
+query values to choose this policy. Actual FFprobe H.264/AAC validation remains
+mandatory before publication; map only `incompatibleMedia` to format unavailable,
+retaining other probe-error and shutdown-unconfirmed behavior. Add host/argv tests
+and real-coordinator loopback regressions for portrait H.264/AAC publication and
+portrait MPEG-4/AAC rejection with missing source labels. A test-only runner may
+map an exact reserved synthetic Facebook URL to loopback after command construction;
+no automated real-site fetch or browser data is permitted. Preserve the generic
+unknown-codec MP4 rejection test. See the [bugfix requirements](../../bugfixes/2026-10-23-facebook-mp4.md).
+
+Do not expand to arbitrary codec fallback or use `--recode-video`. MP3 uses `-f ba/b -x --audio-format mp3 --audio-quality 2`. No `--ignore-errors`, remote component downloads, or shell `--exec` hooks.
 
 - [ ] **Step 3: Decode metadata/events and retest.** Clamp display fractions to 0...1 only for positive finite totals; absent sizes remain indeterminate. A stream's 100% event does not mean job completion. Return nil for ordinary warnings; `.malformed` for an invalid app-prefixed control event. Require one root video object and valid nonempty ID/title; invalid optional metadata does not crash the UI. Run `swift test --filter 'URLValidator|YTDLPCommands|MetadataDecoder|YTDLPEvents'`, expect PASS; commit `feat: define safe extraction and progress contracts`.
 

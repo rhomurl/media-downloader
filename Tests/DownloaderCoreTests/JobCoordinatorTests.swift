@@ -169,18 +169,18 @@ struct JobCoordinatorTests {
         await h.coordinator.cancel()
         #expect(try await h.waitForTerminal().phase == .cancelled)
     }
-    @Test(arguments: ["reject", "exit", "timeout"])
+    @Test(arguments: ["reject", "exit", "timeout", "invalid"])
     func probeFailureCannotPublish(kind: String) async throws {
         let h = try await CoordinatorHarness.readyVideo(); defer { h.remove() }
         await h.coordinator.download(preset: .mp4, destination: h.destination)
         let command = try await h.runner.waitForCommand(at: 1)
         await h.runner.resume(.init(lines: [try h.finalPathLine(for: command)]), at: 1)
         _ = try await h.runner.waitForCommand(at: 2)
-        let data = try TestSupport.fixture(kind == "reject" ? "probe-wrong-codec" : "probe-h264-aac")
+        let data = kind == "invalid" ? Data("invalid JSON".utf8) : try TestSupport.fixture(kind == "reject" ? "probe-wrong-codec" : "probe-h264-aac")
         await h.runner.resume(.init(lines: [.init(stream: .stdout, bytes: data)], exitCode: kind == "exit" ? 1 : 0,
                                     failure: kind == "timeout" ? .timeout : nil), at: 2)
         let result = try await h.waitForTerminal()
-        #expect(result.phase == .failed && result.issue == (kind == "timeout" ? .timeout : .processing))
+        #expect(result.phase == .failed && result.issue == (kind == "timeout" ? .timeout : kind == "reject" ? .formatUnavailable : .processing))
         #expect(try h.completedFiles().isEmpty)
     }
     @Test(arguments: [OutputPreset.mp4, .mp3])

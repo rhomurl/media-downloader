@@ -102,4 +102,29 @@ struct YTDLPCommandsTests {
         #expect(command.arguments[format + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
         #expect(!command.arguments.contains("--recode-video"))
     }
+    @Test(arguments: ["https://facebook.com/reel/synthetic", "https://www.facebook.com/reel/synthetic",
+                      "http://m.facebook.com:8080/reel/synthetic", "https://WWW.FACEBOOK.COM/reel/synthetic",
+                      "https://video.xx.facebook.com/reel/synthetic"])
+    func facebookProgressiveFallbackFollowsStrictSelection(_ url: String) throws {
+        let request = PreviewRequest(rawURL: url, browser: .none)
+        let command = try builder.download(request, preset: .mp4, staging: staging)
+        let index = try #require(command.arguments.firstIndex(of: "-f"))
+        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]")
+        #expect(Array(command.arguments.suffix(2)) == ["--", url])
+        #expect(!command.arguments.contains("--recode-video"))
+        #expect(!command.arguments.contains("--cookies-from-browser"))
+        #expect(try builder.download(request, preset: .mp3, staging: staging).arguments.contains("ba/b"))
+        let preview = try builder.preview(request)
+        #expect(!preview.arguments.contains("-f"))
+    }
+
+    @Test(arguments: ["https://facebook.com.example.org/reel/synthetic", "https://notfacebook.com/reel/synthetic",
+                      "https://facebook.com./reel/synthetic", "https://fb.watch/synthetic",
+                      "https://example.org/facebook.com?url=https://facebook.com/reel/synthetic",
+                      "https://example.org/video#facebook.com", "https://facebοok.com/reel/synthetic"])
+    func facebookFallbackDoesNotAdmitLookalikesOrRedirectDomains(_ url: String) throws {
+        let command = try builder.download(.init(rawURL: url, browser: .none), preset: .mp4, staging: staging)
+        let index = try #require(command.arguments.firstIndex(of: "-f"))
+        #expect(command.arguments[index + 1] == "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]")
+    }
 }

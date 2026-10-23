@@ -25,8 +25,14 @@ public struct YTDLPCommands: Sendable {
         ]
         switch preset {
         case .mp4:
-            // Unknown codec labels do not establish H.264/AAC compatibility.
-            arguments += ["-f", "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]",
+            var selector = "bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[vcodec^=avc1][acodec^=mp4a]"
+            let host = try URLValidator.validate(request.rawURL).host?.lowercased() ?? ""
+            if host == "facebook.com" || host.hasSuffix(".facebook.com") {
+                // Facebook progressive MP4 entries may omit codec labels. This
+                // candidate still requires actual H.264/AAC artifact verification.
+                selector += "/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]"
+            }
+            arguments += ["-f", selector,
                           "--merge-output-format", "mp4", "--remux-video", "mp4"]
         case .mp3:
             arguments += ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "2"]

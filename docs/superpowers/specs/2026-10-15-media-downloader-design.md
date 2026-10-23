@@ -23,6 +23,19 @@ The approved approach uses SwiftUI, external Homebrew tools, one active job, and
 
 MP4 means H.264 video with AAC audio, selected from source formats and merged/remuxed without video transcoding. Use the best available compatible resolution; no resolution selector in the first slice. If the required streams are absent, report that this preset is unavailable. Sources without an audio stream are outside this initial MP4 preset.
 
+Approved correction (2026-10-23): retain strict labelled H.264/AAC selection first.
+For parsed HTTP(S) hosts equal to `facebook.com` or a subdomain, permit a progressive
+MP4 candidate with missing codec labels using the trailing selector
+`/b[ext=mp4][vcodec^=?avc1][acodec^=?mp4a]`. Known incompatible or absent-stream
+labels remain excluded. Unknown labels are not evidence of compatibility: actual
+FFprobe H.264/AAC validation is mandatory before exclusive publication, and an
+incompatible artifact fails as format unavailable. Other probe errors retain their
+existing classifications and unsafe shutdown still retains staging. Other hosts,
+including `fb.watch`, and generic direct MP4 inputs retain strict rejection of
+unknown codecs. No transcoding or credential retry is added. The
+[scoped bugfix](../../bugfixes/2026-10-23-facebook-mp4.md) records the selected-source
+evidence and permitted cost: downloading then discarding an incompatible candidate.
+
 MP3 selects an available audio source and converts when needed with FFmpeg, using VBR quality 2. Sources without audio fail clearly. Do not describe conversion as improving source fidelity. No arbitrary local-file conversion or silent output-format fallback.
 
 Probe the resulting artifact with FFprobe before success to check the container/stream contract. A nonzero subprocess exit, missing/empty output, failed verification, or failed final move is a failed job. Missing or interrupted media fragments must fail rather than publish a playable partial result.

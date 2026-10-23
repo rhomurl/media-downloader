@@ -1,6 +1,6 @@
 # Verification evidence
 
-Current local evidence is recorded below under Task 8 (2026-10-23). Earlier
+Current local evidence includes the Facebook MP4 fix section (2026-10-23), below. Earlier
 sections retain their original observations and limits. Local automated checks
 and bundle signing are distinct from the controller GUI/public observations and
 remaining live/browser limits recorded below.
@@ -387,3 +387,61 @@ that verification. Only tests, developer harness, and documentation changed.
 The completed [review record](reviews/2026-10-23-implementation-review.md) includes
 scope limits and follow-up closure. Private/browser-cookie and listed platform
 checks remain pending; no release or distribution action was taken.
+
+
+## Facebook progressive MP4 correction (2026-10-23)
+
+The [scoped requirements](bugfixes/2026-10-23-facebook-mp4.md) document the
+controller's confirmed selected-source cause. This implementation adds only a
+Facebook-host progressive MP4 fallback after strict selection and maps actual
+incompatible-media validation to format unavailable. H.264/AAC verification,
+no video transcoding, exclusive publication, explicit ephemeral browser/profile
+selection, and shutdown-before-cleanup remain mandatory.
+
+New host/argv and coordinator tests were run before the production changes:
+`bash scripts/test.sh --filter 'YTDLPCommandsTests|probeFailureCannotPublish'`
+reported 13 tests in two suites with six failures: five Facebook URLs lacked the
+fallback, and incompatible FFprobe media had the old processing classification.
+After the fix, the same 13 reported tests passed in 0.005 seconds. Probe exit,
+invalid JSON, and timeout retain processing/timeout behavior; existing uncertain-
+shutdown retention and cancellation tests remain in the full suite.
+
+`python3 scripts/integration.py` before the fix reported six integration functions
+with four failed assertions in the new portrait regression. Neither variant
+reached FFprobe, and the compatible candidate failed instead of publishing.
+A focused diagnostic rerun confirmed the same four assertions. Both nonzero test
+drivers retained their own synthetic fixture roots according to the existing
+fail-closed harness policy; these retained roots were not deleted. After the fix,
+the same integration command passed six functions / twelve cases in 1.985 seconds.
+
+Both new portrait fixtures are generated locally at 180×320: H.264/AAC and an
+incompatible MPEG-4/AAC MP4. A test-only runner maps one exact synthetic Facebook
+reel URL to loopback after production command construction. Preview confirms
+missing source codec labels. Both downloads complete their real FFprobe command;
+only H.264/AAC publishes, while incompatible media returns format unavailable with
+no output or remaining staging. The pre-existing generic direct MP4 unknown-codec
+rejection still passes. No actual Facebook request, browser registry, profile,
+cookie store, user URL, or live metadata was accessed by these automated checks.
+
+Final checks on Apple Silicon macOS 26.6.2 with Apple Swift 6.2:
+
+- `bash scripts/test.sh`: exit 0; 151 reported tests / 16 suites in 11.060 seconds.
+  Six real-tool integration functions plus one offline-readiness function were
+  explicitly skipped in this default pass.
+- `swift build --product MediaDownloader`: exit 0; native build in 2.37 seconds.
+- `bash scripts/verify.sh --integration`: exit 0. ProcessFixture built; 151 reported
+  Swift tests / 16 suites passed in 11.152 seconds with the same explicit skips;
+  the release bundle was rebuilt and its local ad-hoc signature verified; ten
+  Python harness lifecycle tests passed in 10.100 seconds; separately enabled
+  real integration passed six functions / twelve cases in 2.219 seconds.
+- Tool versions: yt-dlp 2026.08.19, FFmpeg/FFprobe 9.0.2, Deno 2.9.7.
+- `git diff --check`: passed. Tests/builds used normal compiler-cache and loopback
+  permissions. No tool was installed or updated.
+
+These results establish synthetic selection and artifact/publication behavior.
+Independent controller review and the actual failing reel's native GUI retry with
+an explicitly selected profile remain pending at implementation handoff. Earlier
+public/GUI observations do not prove this Facebook fix. The installed extractor
+and this selected source motivated the exception; availability for other Facebook
+videos, `fb.watch`, private sources, browser permission flows, other macOS versions
+or architectures, and distribution are not established by these checks.

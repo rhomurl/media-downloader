@@ -224,6 +224,7 @@ public actor JobCoordinator {
         } else {
             let issue: AppIssue
             if let safe = error as? AppIssue { issue = safe }
+            else if case ArtifactVerificationFailure.incompatibleMedia = error { issue = .formatUnavailable }
             else if case ProcessFailure.timeout = error { issue = .timeout }
             else if case ProcessFailure.launch = error { issue = .dependency }
             else { issue = defaultIssue }

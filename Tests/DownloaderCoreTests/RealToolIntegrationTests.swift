@@ -45,6 +45,35 @@ struct RealToolIntegrationTests {
         }
     }
 
+    @Test(arguments: [true, false])
+    func facebookUnknownCodecPortraitCandidateRequiresArtifactValidation(compatible: Bool) async throws {
+        let path = compatible ? "portrait-compatible.mp4" : "portrait-incompatible.mp4"
+        try await withRealIntegrationHarness(mappedFacebookPath: path) { h in
+            // Reserved synthetic input is never fetched: only the test runner
+            // maps it to loopback, after the production builder selects policy.
+            await h.coordinator.preview(.init(rawURL: FacebookLoopbackRunner.source, browser: .none))
+            #expect(try await h.waitFor([.ready, .failed]).phase == .ready)
+            #expect(await h.mappingRunner?.previewHadUnlabelledMP4 == true)
+            await h.coordinator.download(preset: .mp4, destination: h.destination)
+            let result = try await h.waitFor([.succeeded, .failed, .cancelled])
+            // Proves both variants reached the real FFprobe, rather than the
+            // incompatible case merely failing source format selection.
+            #expect(await h.mappingRunner?.completedProbes == 1)
+            #expect(result.notice == nil)
+            if compatible {
+                #expect(result.phase == .succeeded && result.issue == nil)
+                let output = try #require(result.output)
+                try await ArtifactVerifier(runner: ProcessRunner(), tools: h.tools).verify(output, preset: .mp4)
+                #expect(try h.contents().map { $0.resolvingSymlinksInPath().path }
+                    == [output.resolvingSymlinksInPath().path])
+            } else {
+                #expect(result.phase == .failed && result.issue == .formatUnavailable)
+                #expect(result.output == nil)
+                #expect(try h.contents().isEmpty)
+            }
+        }
+    }
+
     @Test(arguments: ["missing.m3u8", "metadata-unavailable.html"])
     func previewFailuresNeverPublish(path: String) async throws {
         try await withRealIntegrationHarness { h in
@@ -84,8 +113,8 @@ struct RealToolIntegrationTests {
 
 // Even a timeout or failed #require must join owned subprocesses/readers before
 // deleting this test's destination. Preserve staging on uncertain shutdown.
-private func withRealIntegrationHarness(_ body: (RealIntegrationHarness) async throws -> Void) async throws {
-    let harness = try RealIntegrationHarness()
+private func withRealIntegrationHarness(mappedFacebookPath: String? = nil, _ body: (RealIntegrationHarness) async throws -> Void) async throws {
+    let harness = try RealIntegrationHarness(mappedFacebookPath: mappedFacebookPath)
     do {
         try await body(harness)
     } catch {
@@ -103,7 +132,8 @@ private struct RealIntegrationHarness {
     let coordinator: JobCoordinator
     let destination: URL
     private let base: URL
-    init() throws {
+    let mappingRunner: FacebookLoopbackRunner?
+    init(mappedFacebookPath: String? = nil) throws {
         let supplied = try #require(integrationEnvironment["MEDIA_DOWNLOADER_INTEGRATION_URL"])
         let parsed = try #require(URL(string: supplied))
         guard parsed.scheme == "http", parsed.host == "127.0.0.1", parsed.port != nil,
@@ -115,7 +145,14 @@ private struct RealIntegrationHarness {
             return URL(fileURLWithPath: path)
         }
         tools = try .init(ytdlp: tool("YTDLP"), ffmpeg: tool("FFMPEG"), ffprobe: tool("FFPROBE"), deno: tool("DENO"))
-        coordinator = JobCoordinator(runner: ProcessRunner(), tools: tools)
+        if let mappedFacebookPath {
+            let mapping = FacebookLoopbackRunner(tools: tools, loopback: base.appendingPathComponent(mappedFacebookPath).absoluteString)
+            mappingRunner = mapping
+            coordinator = JobCoordinator(runner: mapping, tools: tools)
+        } else {
+            mappingRunner = nil
+            coordinator = JobCoordinator(runner: ProcessRunner(), tools: tools)
+        }
         destination = try TestSupport.temporaryDirectory()
     }
     func url(_ path: String) -> String { base.appendingPathComponent(path).absoluteString }
@@ -133,6 +170,50 @@ private struct RealIntegrationHarness {
             group.addTask { try await Task.sleep(for: .seconds(90)); throw ScriptedWaitFailure.deadline }
             defer { group.cancelAll() }
             return try #require(try await group.next())
+        }
+    }
+}
+
+// Test-only source mapping keeps the coordinator, command builder, yt-dlp format
+// selector, process supervision, files and FFprobe real. No production test hooks.
+private actor FacebookLoopbackRunner: ProcessRunning {
+    static let source = "https://media-downloader-fixture.facebook.com/reel/synthetic"
+    let tools: ResolvedTools
+    let loopback: String
+    let runner = ProcessRunner()
+    var completedProbes = 0
+    var previewHadUnlabelledMP4 = false
+
+    init(tools: ResolvedTools, loopback: String) { self.tools = tools; self.loopback = loopback }
+
+    func run(_ command: ProcessCommand,
+             onLine: @escaping @Sendable (ProcessLine) async -> Void) async throws -> ProcessResult {
+        var arguments = command.arguments
+        if command.executable == tools.ytdlp {
+            // Fail before launching for any request outside this exact fixture.
+            guard Array(arguments.suffix(2)) == ["--", Self.source],
+                  !arguments.contains("--cookies-from-browser") else { throw AppIssue.invalidURL }
+            arguments[arguments.count - 1] = loopback
+        }
+        let mapped = ProcessCommand(executable: command.executable, arguments: arguments,
+            environment: command.environment, timeout: command.timeout, maximumLineBytes: command.maximumLineBytes)
+        let preview = arguments.contains("--dump-single-json")
+        let result = try await runner.run(mapped) { line in
+            if preview { await self.inspectPreview(line) }
+            await onLine(line)
+        }
+        if command.executable == tools.ffprobe { completedProbes += 1 }
+        return result
+    }
+
+    private func inspectPreview(_ line: ProcessLine) {
+        guard line.stream == .stdout,
+              let object = try? JSONSerialization.jsonObject(with: line.bytes) as? [String: Any],
+              let formats = object["formats"] as? [[String: Any]] else { return }
+        previewHadUnlabelledMP4 = formats.contains {
+            $0["ext"] as? String == "mp4"
+                && ($0["vcodec"] == nil || $0["vcodec"] is NSNull)
+                && ($0["acodec"] == nil || $0["acodec"] is NSNull)
         }
     }
 }

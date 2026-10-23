@@ -201,6 +201,15 @@ class LoopbackFixture:
                    "-master_pl_name", "master.m3u8", "-var_stream_map", "v:0,a:0", "media.m3u8"], cwd=self.root)
         run_quiet([tools["FFMPEG"], "-nostdin", "-hide_banner", "-loglevel", "error",
                    "-i", "media.m3u8", "-c", "copy", "direct.mp4"], cwd=self.root)
+        # Portrait progressive MP4 candidates deliberately have no manifest codec
+        # labels. The incompatible variant must be rejected after actual probing.
+        for codec, name in (("libx264", "portrait-compatible.mp4"),
+                            ("mpeg4", "portrait-incompatible.mp4")):
+            run_quiet([tools["FFMPEG"], "-nostdin", "-hide_banner", "-loglevel", "error",
+                       "-f", "lavfi", "-i", "testsrc=size=180x320:rate=15",
+                       "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", "2",
+                       "-c:v", codec, "-pix_fmt", "yuv420p", "-b:v", "256k",
+                       "-c:a", "aac", "-b:a", "64k", name], cwd=self.root)
         run_quiet([tools["FFMPEG"], "-nostdin", "-hide_banner", "-loglevel", "error",
                    "-i", "media.m3u8", "-vn", "-c:a", "copy", "-f", "hls", "-hls_playlist_type", "vod",
                    "-hls_segment_filename", "audio-%03d.ts", "audio.m3u8"], cwd=self.root)
