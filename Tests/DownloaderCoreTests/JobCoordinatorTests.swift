@@ -386,26 +386,26 @@ extension JobCoordinatorTests {
     func quitWaitsForRealDescendantsAndReadersBeforeRemovingStaging(mode: String) async throws {
         let runner = DescendantCoordinatorRunner(mode: mode)
         let destination = try TestSupport.temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: destination) }
-        let coordinator = JobCoordinator(runner: runner, tools: TestSupport.tools)
-        defer { Task { await runner.release.signal(); await coordinator.shutdown() } }
-        let h = CoordinatorObservation(coordinator: coordinator)
-        await coordinator.preview(CoordinatorHarness.request)
-        _ = try await h.waitFor(.ready)
-        await coordinator.download(preset: .mp4, destination: destination)
-        try await runner.started.wait()
-        let pid = try #require(await runner.childPID())
-        let staging = try #require(await runner.staging())
-        let quitting = Task { await coordinator.shutdown() }
-        // This signal is emitted after ProcessRunner returns: descendants and readers
-        // have stopped, but the adapter intentionally holds the runner return boundary.
-        try await runner.stopped.wait()
-        #expect([0, 5].contains(fixture_process_status(pid)))
-        #expect(FileManager.default.fileExists(atPath: staging.path))
-        await runner.release.signal()
-        _ = await quitting.value
-        #expect(try await h.waitFor(.cancelled).phase == .cancelled)
-        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        try await withDescendantFixture(runner: runner, destination: destination) { coordinator in
+            let h = CoordinatorObservation(coordinator: coordinator)
+            await coordinator.preview(CoordinatorHarness.request)
+            _ = try await h.waitFor(.ready)
+            await coordinator.download(preset: .mp4, destination: destination)
+            try await runner.started.wait()
+            let pid = try #require(await runner.childPID())
+            let staging = try #require(await runner.staging())
+            let quitting = Task { await coordinator.shutdown() }
+            // Either normal return or cancellation reaches this barrier only after
+            // ProcessRunner has stopped descendants/readers. The adapter still holds
+            // its return, so the coordinator cannot clean staging yet.
+            try await runner.stopped.wait()
+            #expect([0, 5].contains(fixture_process_status(pid)))
+            #expect(FileManager.default.fileExists(atPath: staging.path))
+            await runner.release.open()
+            _ = await quitting.value
+            #expect(try await h.waitFor(.cancelled).phase == .cancelled)
+            #expect(!FileManager.default.fileExists(atPath: staging.path))
+        }
     }
 }
 
@@ -469,11 +469,16 @@ private struct CoordinatorObservation {
 private actor DescendantCoordinatorRunner: ProcessRunning {
     let started = OneShotSignal()
     let stopped = OneShotSignal()
-    let release = OneShotSignal()
+    let returned = OneShotSignal()
+    let release = TestLatch()
+    let completed = TestFlag()
     private let mode: String
+    private let runner: any ProcessRunning
     private var pid: Int32?
     private var directory: URL?
-    init(mode: String) { self.mode = mode }
+    init(mode: String, runner: any ProcessRunning = ProcessRunner()) {
+        self.mode = mode; self.runner = runner
+    }
     func childPID() -> Int32? { pid }
     func staging() -> URL? { directory }
     private func accept(_ line: ProcessLine) async {
@@ -489,16 +494,19 @@ private actor DescendantCoordinatorRunner: ProcessRunning {
         }
         let index = try #require(command.arguments.firstIndex(of: "-o"))
         directory = URL(fileURLWithPath: command.arguments[index + 1]).deletingLastPathComponent()
+        let outcome: Result<ProcessResult, any Error>
         do {
-            return try await ProcessRunner().run(TestSupport.fixtureCommand([mode], timeout: nil)) { await self.accept($0) }
-        } catch {
-            await stopped.signal()
-            // Await independently so task cancellation does not remove our deliberate
-            // post-readers/pre-return test barrier.
-            let barrier = Task.detached { try await self.release.wait() }
-            try await barrier.value
-            throw error
-        }
+            let result = try await runner.run(TestSupport.fixtureCommand([mode], timeout: nil)) { await self.accept($0) }
+            outcome = .success(result)
+            await returned.signal()
+        } catch { outcome = .failure(error) }
+        await stopped.signal()
+        // This latch has no cancellation handler or deadline: only explicit release
+        // opens it. Fixture cleanup always opens it before awaiting shutdown, even
+        // when the test body throws. Preserve the original success/error unchanged.
+        await release.wait()
+        await completed.mark()
+        return try outcome.get()
     }
 }
 
@@ -542,4 +550,82 @@ extension JobCoordinatorTests {
         #expect(failed.issue == .shutdownUnconfirmed && failed.operationID == newID)
         #expect(await h.runner.commands().count == 1)
     }
+}
+
+
+extension JobCoordinatorTests {
+    @Test func naturalDescendantReturnStillHoldsStoppedBoundaryBeforeQuit() async throws {
+        let runner = DescendantCoordinatorRunner(mode: "orphan-hold")
+        let destination = try TestSupport.temporaryDirectory()
+        try await withDescendantFixture(runner: runner, destination: destination) { coordinator in
+            let observation = CoordinatorObservation(coordinator: coordinator)
+            await coordinator.preview(CoordinatorHarness.request)
+            _ = try await observation.waitFor(.ready)
+            await coordinator.download(preset: .mp4, destination: destination)
+            // Force normal ProcessRunner return before Quit; no delay or retry.
+            try await runner.returned.wait()
+            try await runner.stopped.wait()
+            let pid = try #require(await runner.childPID())
+            let staging = try #require(await runner.staging())
+            #expect([0, 5].contains(fixture_process_status(pid)))
+            #expect(FileManager.default.fileExists(atPath: staging.path))
+            let quitting = Task { await coordinator.shutdown() }
+            _ = try await observation.waitFor(.cancelling)
+            // Cancellation must not bypass the explicit post-readers return gate.
+            #expect(!(await runner.completed.value()))
+            #expect(FileManager.default.fileExists(atPath: staging.path))
+            await runner.release.open()
+            let final = await quitting.value
+            #expect(final.phase == .cancelled)
+            #expect(!FileManager.default.fileExists(atPath: staging.path))
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func descendantFixtureErrorCleanupJoinsShutdownAndRetainsUncertainty(unsafe: Bool) async throws {
+        // This branch launches no real process. The synthetic uncertain outcome
+        // allows checking retention without leaving a potentially live fixture.
+        let scripted = ScriptedRunner(replies: [.init(failure: unsafe ? .shutdownUnconfirmed(13) : nil)])
+        let runner = DescendantCoordinatorRunner(mode: "report-pid", runner: scripted)
+        let destination = try TestSupport.temporaryDirectory()
+        do {
+            try await withDescendantFixture(runner: runner, destination: destination) { coordinator in
+                await coordinator.preview(CoordinatorHarness.request)
+                _ = try await CoordinatorObservation(coordinator: coordinator).waitFor(.ready)
+                await coordinator.download(preset: .mp4, destination: destination)
+                try await runner.stopped.wait()
+                #expect(!(await runner.completed.value()))
+                #expect(FileManager.default.fileExists(atPath: destination.path))
+                throw DescendantFixtureBodyFailure.injected
+            }
+            Issue.record("Expected the original test-body failure")
+        } catch DescendantFixtureBodyFailure.injected { }
+        #expect(await runner.completed.value())
+        #expect(FileManager.default.fileExists(atPath: destination.path) == unsafe)
+        // Only the scripted case is removed after verifying retention: no process
+        // was launched, and this directory contains only owned synthetic fixtures.
+        if unsafe { try FileManager.default.removeItem(at: destination) }
+    }
+}
+
+private enum DescendantFixtureBodyFailure: Error { case injected }
+
+/// Both success and throwing test bodies release the adapter and await the complete
+/// coordinator shutdown before deleting their owned root. Uncertainty retains it.
+private func withDescendantFixture(
+    runner: DescendantCoordinatorRunner, destination: URL,
+    body: (JobCoordinator) async throws -> Void
+) async throws {
+    let coordinator = JobCoordinator(runner: runner, tools: TestSupport.tools)
+    do {
+        try await body(coordinator)
+    } catch {
+        await runner.release.open()
+        let final = await coordinator.shutdown()
+        if final.issue != .shutdownUnconfirmed { try? FileManager.default.removeItem(at: destination) }
+        throw error
+    }
+    await runner.release.open()
+    let final = await coordinator.shutdown()
+    if final.issue != .shutdownUnconfirmed { try FileManager.default.removeItem(at: destination) }
 }
