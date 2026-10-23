@@ -14,10 +14,10 @@ The approved approach uses SwiftUI, external Homebrew tools, one active job, and
 
 1. Startup checks yt-dlp, FFmpeg, FFprobe, and Deno without accessing browser cookies. A dependency screen explains missing tools and shows resolved paths/versions.
 2. The main window has a URL field, browser selector (`None`, Chrome, Brave, Firefox), and Preview action. Selecting Brave exposes a profile picker; the user must choose a profile before cookie-backed preview/download. The picker reads only profile IDs/display names from Brave's local registry, after Brave is selected, without reading cookie stores. Cookie access occurs only when the user invokes preview/download with a browser selected.
-3. Preview shows title and duration when present. Thumbnail is optional; failure to load it does not block downloading. No raw format-ID picker is required.
+3. Preview is optional and shows title and duration when present. Thumbnail is optional; failure to load it does not block downloading. No raw format-ID picker is required.
 4. The user selects MP4 or MP3 and chooses a destination, initially Downloads. Folder-picker cancellation leaves the prior choice intact. Remember destination and output preference locally; cookie use defaults to None on each app launch.
-5. Download reports transfer progress when available and a separate processing phase. Cancel applies during preview, transfer, and processing. Edits to URL/browser/Brave profile invalidate preview; active downloads freeze their inputs.
-6. Success offers Show in Finder for the actual completed file. Failure offers a readable reason and retry. Retry starts a fresh job; no automatic credential retry or cross-session resume.
+5. Download works immediately after valid URL/browser/profile, output and destination selection; the Preview button is optional (user refinement, 2026-10-23). Without a current matching ready preview, one core-owned download operation runs the same bounded metadata extraction and single-recorded-video validation internally, showing a cancellable preparation status, then begins transfer without exposing an intermediate ready state. Current matching ready previews skip that extra metadata command. Download reports transfer progress when available and a separate processing phase. Cancel applies during preview, preparation, transfer, and processing. Edits to URL/browser/Brave profile invalidate preview; active downloads freeze click-time URL/browser/profile/preset/destination across pending preview shutdown, preparation and transfer. Cancel or Quit while waiting for prior invalidation prevents launch. Metadata failure, collection/live input and uncertain shutdown prevent transfer; unsafe shutdown retains staging and blocks the session.
+6. Success offers Show in Finder for the actual completed file. Failure offers a readable reason and retry. Retry starts a fresh job with fresh metadata preparation; no automatic credential retry or cross-session resume.
 
 ## Output contract
 
@@ -54,7 +54,7 @@ Prefer a Swift package containing a testable core and a macOS executable, plus a
 
 ## State and lifecycle
 
-States: checking dependencies, idle, previewing, ready, downloading, processing, validating, publishing, cancelling, succeeded, failed, cancelled. A new preview clears the previous result. Only the current operation may transition ordinary job state. Inability to confirm shutdown of any owned process, including an older preview, latches a session safety block rather than being discarded as stale metadata.
+States: checking dependencies, idle, previewing, ready, downloading, processing, validating, publishing, cancelling, succeeded, failed, cancelled. A new preview clears the previous result. Direct Download uses previewing as its internal preparation phase while retaining download ownership; it never emits ready between preparation and transfer. Direct Download never reuses an older preview tuple after a completed/cancelled/failed download. Only the current operation may transition ordinary job state. Inability to confirm shutdown of any owned process, including an older preview, latches a session safety block rather than being discarded as stale metadata.
 
 Cancellation signals the owned process group, escalates after a short bounded grace period, waits for processes/readers to stop, then cleans that job's staging directory. Include FFmpeg and runtime descendants. Quit uses the same shutdown path. Disable cancellation for the brief atomic publication operation so a completed file is not ambiguously reported as cancelled.
 

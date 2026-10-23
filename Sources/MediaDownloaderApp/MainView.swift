@@ -41,7 +41,7 @@ struct MainView: View {
                             Button("Refresh profiles") { Task { await model.refreshBraveProfiles() } }
                         }
                     }
-                    Button("Preview") { Task { await model.preview() } }
+                    Button("Preview (Optional)") { Task { await model.preview() } }
                         .disabled(!model.canPreview).keyboardShortcut("p", modifiers: .command)
                 }
                 .disabled(model.isBusy || model.isSessionBlocked)

@@ -83,12 +83,38 @@ public actor JobCoordinator {
             set(id, .failed, issue: .invalidURL)
             return false
         }
-        let id = operationID
+        startDownload(ready.request, metadata: ready.metadata, preset: preset, destination: destination, id: operationID)
+        return true
+    }
+
+    /// One owned task spans preparation and transfer. A matching preview avoids a
+    /// second metadata command; no intermediate ready state permits another launch.
+    @discardableResult
+    public func download(_ request: PreviewRequest, preset: OutputPreset, destination: URL, operationID: UUID) async -> Bool {
+        guard !closed, kind == nil else { return false }
+        let metadata = snapshot.phase == .ready && ready?.request == request ? ready?.metadata : nil
+        ready = nil
+        startDownload(request, metadata: metadata, preset: preset, destination: destination, id: operationID)
+        return true
+    }
+
+    private func startDownload(_ request: PreviewRequest, metadata: VideoMetadata?, preset: OutputPreset, destination: URL, id: UUID) {
         generation = id; cancellationRequested = false; kind = .download
         resetCapture()
-        set(id, .downloading, metadata: ready.metadata)
-        task = Task { await self.runDownload(ready.request, metadata: ready.metadata, preset: preset, destination: destination, id: id) }
-        return true
+        set(id, metadata == nil ? .previewing : .downloading, metadata: metadata)
+        task = Task { await self.prepareAndDownload(request, metadata: metadata, preset: preset, destination: destination, id: id) }
+    }
+
+    private func prepareAndDownload(_ request: PreviewRequest, metadata: VideoMetadata?, preset: OutputPreset, destination: URL, id: UUID) async {
+        do {
+            let validated: VideoMetadata
+            if let metadata { validated = metadata }
+            else { validated = try await extractMetadata(request, id: id) }
+            try checkCurrent(id)
+            resetCapture()
+            set(id, .downloading, metadata: validated)
+            await runDownload(request, metadata: validated, preset: preset, destination: destination, id: id)
+        } catch { fail(id, error: error, defaultIssue: .unknown) }
     }
 
     public func cancel() async {
@@ -114,17 +140,23 @@ public actor JobCoordinator {
 
     private func runPreview(_ request: PreviewRequest, id: UUID) async {
         do {
-            try checkCurrent(id)
-            let command = try commands.preview(request)
-            let result = try await runner.run(command) { [weak self] line in await self?.acceptPreview(line, id: id) }
-            try checkCurrent(id)
-            guard result.exitCode == 0 else { throw AppIssueClassifier.classify(exitCode: result.exitCode, diagnostic: diagnostic) }
-            guard previewLines == 1, let previewBytes else { throw AppIssue.unknown }
-            let metadata = try MetadataDecoder.decode(previewBytes)
+            let metadata = try await extractMetadata(request, id: id)
             try checkCurrent(id)
             ready = (request, metadata)
             finish(id, .ready, metadata: metadata)
         } catch { fail(id, error: error, defaultIssue: .unknown) }
+    }
+
+    /// Runner return includes descendant/readers shutdown. Both entry paths use
+    /// this same bounded extraction, classifier and single-recorded-video decoder.
+    private func extractMetadata(_ request: PreviewRequest, id: UUID) async throws -> VideoMetadata {
+        try checkCurrent(id)
+        let command = try commands.preview(request)
+        let result = try await runner.run(command) { [weak self] line in await self?.acceptPreview(line, id: id) }
+        try checkCurrent(id)
+        guard result.exitCode == 0 else { throw AppIssueClassifier.classify(exitCode: result.exitCode, diagnostic: diagnostic) }
+        guard previewLines == 1, let previewBytes else { throw AppIssue.unknown }
+        return try MetadataDecoder.decode(previewBytes)
     }
 
     private func runDownload(_ request: PreviewRequest, metadata: VideoMetadata, preset: OutputPreset, destination: URL, id: UUID) async {

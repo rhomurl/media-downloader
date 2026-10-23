@@ -8,6 +8,7 @@ public protocol JobCoordinating: Sendable {
     func preview(_ request: PreviewRequest, operationID: UUID) async -> Bool
     func invalidatePreview() async
     func download(preset: OutputPreset, destination: URL, previewOperationID: UUID?, operationID: UUID) async -> Bool
+    func download(_ request: PreviewRequest, preset: OutputPreset, destination: URL, operationID: UUID) async -> Bool
     func cancel() async
     func shutdown() async -> JobSnapshot
 }
@@ -96,22 +97,22 @@ extension JobCoordinator: JobCoordinating {}
         .init(rawURL: rawURL, browser: browser, braveProfileID: browser == .brave ? braveProfileID : nil)
     }
     public var isBusy: Bool {
-        isCheckingDependencies || [.previewing, .downloading, .processing, .validating, .publishing, .cancelling].contains(snapshot.phase)
+        isCheckingDependencies || downloadActive || [.previewing, .downloading, .processing, .validating, .publishing, .cancelling].contains(snapshot.phase)
     }
     public var canCheckDependencies: Bool { !closed && !isSessionBlocked && !isBusy }
     public var canPreview: Bool {
         !closed && !isSessionBlocked && !isBusy && coordinator != nil && dependencyReport?.tools != nil
-            && !rawURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (try? URLValidator.validate(rawURL)) != nil
             && (browser != .brave || (!isLoadingProfiles && braveProfiles.contains { $0.id == braveProfileID }))
     }
     public var canDownload: Bool {
-        canPreview && snapshot.phase == .ready && previewIdentity?.0 == operationID && previewIdentity?.1 == request
+        canPreview
     }
     public var canCancel: Bool { !closed && !isSessionBlocked && isBusy && snapshot.phase != .publishing && !isCheckingDependencies && snapshot.phase != .cancelling }
     public var busyLabel: String {
         if isCheckingDependencies { return "Checking required tools" }
         switch snapshot.phase {
-        case .previewing: return "Loading preview"
+        case .previewing: return downloadActive ? "Preparing download" : "Loading preview"
         case .downloading: return "Downloading media"
         case .processing: return "Processing media"
         case .validating: return "Verifying downloaded file"
@@ -128,7 +129,7 @@ extension JobCoordinator: JobCoordinating {}
         case .succeeded: return "Download complete."
         case .cancelled: return "Cancelled."
         case .ready: return "Preview ready. Choose an output and download."
-        default: return "Preview a single recorded video to begin."
+        default: return "Paste a single recorded video URL and choose Download. Preview is optional."
         }
     }
     /// Notices are fixed core copy, never arbitrary diagnostics from an adapter.
@@ -195,8 +196,10 @@ extension JobCoordinator: JobCoordinating {}
     }
 
     private func inputChanged() {
-        inputEpoch += 1; previewIdentity = nil
+        // Programmatic edits are possible even while controls are disabled. They
+        // must not cancel or substitute the immutable click-time download inputs.
         guard !downloadActive, !closed, !isSessionBlocked else { return }
+        inputEpoch += 1; previewIdentity = nil
         operationID = nil; snapshot = Self.empty(.idle)
         let previous = invalidation; let core = coordinator
         invalidation = Task { await previous?.value; await core?.invalidatePreview() }
@@ -214,10 +217,26 @@ extension JobCoordinator: JobCoordinating {}
         }
     }
     public func download() async {
-        guard canDownload, let coordinator, let readyID = previewIdentity?.0 else { return }
-        let id = UUID(); let output = preset; let folder = destination
-        operationID = id; downloadActive = true; snapshot = Self.empty(.downloading)
-        let accepted = await coordinator.download(preset: output, destination: folder, previewOperationID: readyID, operationID: id)
+        guard canDownload, let coordinator else { return }
+        let captured = request; let output = preset; let folder = destination; let epoch = inputEpoch
+        let readyID = snapshot.phase == .ready && previewIdentity?.0 == operationID && previewIdentity?.1 == captured
+            ? previewIdentity?.0 : nil
+        let id = UUID()
+        operationID = id; downloadActive = true
+        snapshot = Self.empty(readyID == nil ? .previewing : .downloading)
+        await invalidation?.value
+        guard !closed, !isSessionBlocked, operationID == id, inputEpoch == epoch else {
+            if !closed, !isSessionBlocked, operationID == id {
+                downloadActive = false; previewIdentity = nil; snapshot = Self.empty(.cancelled)
+            }
+            return
+        }
+        let accepted: Bool
+        if let readyID {
+            accepted = await coordinator.download(preset: output, destination: folder, previewOperationID: readyID, operationID: id)
+        } else {
+            accepted = await coordinator.download(captured, preset: output, destination: folder, operationID: id)
+        }
         if !accepted, operationID == id, !isSessionBlocked {
             downloadActive = false; operationID = nil; previewIdentity = nil; snapshot = Self.empty(.idle)
         }

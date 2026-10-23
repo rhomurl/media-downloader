@@ -366,6 +366,8 @@ Normalize a title for display filenames, remove control/separator characters, ap
 
 ### Task 6: Integrate preview/download state and safe errors
 
+**2026-10-23 direct-Download refinement:** The additional `download(_ request: PreviewRequest, preset: OutputPreset, destination: URL, operationID: UUID) async -> Bool` owns metadata preparation and transfer in one task/operation. It shares bounded extraction/validation with explicit Preview, skips preparation only for a currently ready matching request, and never exposes an intermediate ready state. The expected-preview-ID overload remains for ready-preview reuse. Guard cancellation/identity after suspensions; metadata failure, collection/live rejection, Cancel/Quit and shutdown uncertainty cannot launch transfer. Direct retries after terminal states prepare fresh metadata. Regression coverage uses explicit metadata-return and invalidation barriers, and retains all existing file/process/session contracts.
+
 **Files:** Create `Sources/DownloaderCore/JobCoordinator.swift`, `AppIssueClassifier.swift`, `Tests/DownloaderCoreTests/JobCoordinatorTests.swift`, `AppIssueClassifierTests.swift`; extend `ScriptedRunner.swift` with controllable suspended replies for race tests.
 
 **Consumes:** All earlier core components.
@@ -402,6 +404,8 @@ After unconfirmed shutdown, latch `AppIssue.shutdownUnconfirmed` for this coordi
 
 ### Task 7: Connect the native window, preferences, and quit flow
 
+**2026-10-23 direct-Download refinement:** Download eligibility requires ready dependencies and valid URL/explicit browser-profile inputs; it no longer requires Preview. Capture request/preset/destination and identity before awaiting earlier invalidation, then use the matching-preview overload or atomic direct core entry. Freeze the captured input through preparation/transfer; Cancel/Quit invalidate the pending operation. Show “Preparing download” during internal metadata validation and disable duplicate work/dependency changes throughout. Old-ready tests must assert absence of stale metadata/input reuse; helpers await actual ready metadata rather than `canDownload`.
+
 **Files:** Create `Sources/DownloaderPresentation/AppModel.swift`; create `MainView.swift`, `DependencyView.swift`, `PreviewView.swift`, `DownloadStatusView.swift`, `AppDelegate.swift` in `Sources/MediaDownloaderApp/`; update app entry point; create `Tests/DownloaderPresentationTests/AppModelTests.swift` and declare `DownloaderPresentation` library/test targets in `Package.swift`. The app imports the presentation library; tests import that same model rather than duplicating it.
 
 **Consumes:** Coordinator updates, dependency report, and safe error copy.
@@ -432,6 +436,8 @@ Latch session blocking after `AppIssue.shutdownUnconfirmed` or dependency proble
 - [ ] **Step 4: Run model/core tests and build the app executable.** Expect PASS. Commit `feat: add native preview and download workflow`.
 
 ### Task 8: Assemble the local app and prove real-tool integration
+
+**2026-10-23 direct-Download refinement:** Real loopback MP4/MP3 success and metadata-preparation failure cases run through both direct Download and explicit Preview. Success still requires real artifact verification and exclusive publication; no loopback result proves live-site or browser-cookie support. Final combined verification runs `bash scripts/verify.sh --integration` and `swift build --product MediaDownloader`, with actual counts and permission limits recorded in `docs/VERIFICATION.md`.
 
 **Files:** Create `Resources/Info.plist`, `scripts/build-app.sh`, `scripts/verify.sh`, `scripts/integration.py`, `Tests/DownloaderCoreTests/RealToolIntegrationTests.swift`, `docs/VERIFICATION.md`; update `README.md`.
 

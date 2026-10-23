@@ -22,11 +22,11 @@ public enum AppIssueClassifier {
     public static func message(for issue: AppIssue) -> String {
         switch issue {
         case .dependency: "Required tools are missing or could not run. Check setup and try again."
-        case .invalidURL: "Enter a valid HTTP or HTTPS video URL and preview it first."
+        case .invalidURL: "Enter a valid HTTP or HTTPS video URL."
         case .unsupported: "This URL or live video is not supported. Choose a single recorded video."
         case .collection: "Collections and playlists are not supported. Choose a single video."
         case .browserAccess: "Browser cookies could not be accessed or decrypted. Check browser permissions and try again."
-        case .loginRequired: "This video requires authentication. Select the browser where you are signed in and preview again."
+        case .loginRequired: "This video requires authentication. Select the browser where you are signed in and try again."
         case .unavailable: "This video is unavailable or access is restricted."
         case .formatUnavailable: "The requested output format is unavailable for this video."
         case .network: "A network or rate-limit error interrupted the operation. Try again later."

@@ -63,12 +63,17 @@ struct RealToolIntegrationTests {
         }
     }
 
-    @Test(arguments: [OutputPreset.mp4, .mp3])
-    func realCoordinatorPublishesVerifiedOutput(preset: OutputPreset) async throws {
+    @Test(arguments: [OutputPreset.mp4, .mp3], [false, true])
+    func realCoordinatorPublishesVerifiedOutput(preset: OutputPreset, directDownload: Bool) async throws {
         try await withRealIntegrationHarness { h in
-            await h.coordinator.preview(.init(rawURL: h.url("master.m3u8"), browser: .none))
-            #expect(try await h.waitFor([.ready, .failed]).phase == .ready)
-            await h.coordinator.download(preset: preset, destination: h.destination)
+            let request = PreviewRequest(rawURL: h.url("master.m3u8"), browser: .none)
+            if directDownload {
+                #expect(await h.coordinator.download(request, preset: preset, destination: h.destination, operationID: UUID()))
+            } else {
+                await h.coordinator.preview(request)
+                #expect(try await h.waitFor([.ready, .failed]).phase == .ready)
+                await h.coordinator.download(preset: preset, destination: h.destination)
+            }
             let result = try await h.waitFor([.succeeded, .failed, .cancelled])
             #expect(result.phase == .succeeded)
             let output = try #require(result.output)
@@ -126,10 +131,13 @@ struct RealToolIntegrationTests {
         }
     }
 
-    @Test(arguments: ["missing.m3u8", "metadata-unavailable.html"])
-    func previewFailuresNeverPublish(path: String) async throws {
+    @Test(arguments: ["missing.m3u8", "metadata-unavailable.html"], [false, true])
+    func preparationFailuresNeverPublish(path: String, directDownload: Bool) async throws {
         try await withRealIntegrationHarness { h in
-            await h.coordinator.preview(.init(rawURL: h.url(path), browser: .none))
+            let request = PreviewRequest(rawURL: h.url(path), browser: .none)
+            if directDownload {
+                #expect(await h.coordinator.download(request, preset: .mp4, destination: h.destination, operationID: UUID()))
+            } else { await h.coordinator.preview(request) }
             let result = try await h.waitFor([.ready, .failed])
             #expect(result.phase == .failed)
             #expect(result.issue != nil && result.output == nil)

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Observation
 import DownloaderCore
 @testable import DownloaderPresentation
 
@@ -42,11 +43,12 @@ import DownloaderCore
         #expect(!h.model.canPreview && h.model.braveProfileID == nil)
         #expect(h.model.braveProfiles.map(\.name) == ["Personal synthetic", "Work synthetic"])
         h.model.braveProfileID = "Profile 4"
-        await h.model.preview(); await eventually { h.model.canDownload }
+        await h.model.preview(); await eventually { h.model.snapshot.phase == .ready && h.model.snapshot.metadata != nil }
         let captured = try #require(await h.core.requests.last)
         #expect(captured.browser == .brave && captured.braveProfileID == "Profile 4")
         await h.model.download()
         #expect(await h.core.downloadedRequest == captured)
+        #expect(await h.core.directCalls == 0)
         await h.model.shutdown()
     }
     @Test func staleProfileLoadCannotReselectAfterSwitchingAway() async {
@@ -64,23 +66,28 @@ import DownloaderCore
         await h.model.shutdown()
     }
     @Test(arguments: ["url", "browser", "profile"])
-    func editsAndQueuedOldReadyCannotEnableDownload(change: String) async throws {
+    func editedInputAndQueuedOldReadyCannotReuseStaleMetadata(change: String) async throws {
         let h = Harness(); await h.readyBrave()
         let old = try #require(await h.core.lastID)
         await h.core.holdInvalidation()
         if change == "url" { h.model.rawURL = "https://video.example.test/two" }
         if change == "browser" { h.model.browser = .chrome }
         if change == "profile" { h.model.braveProfileID = "Default" }
-        #expect(!h.model.canDownload)
+        try await h.core.invalidationEntered.wait()
+        #expect(h.model.canDownload && h.model.snapshot.metadata == nil)
         await h.core.emit(.ready, id: old)
-        await Task.yield()
-        #expect(!h.model.canDownload && h.model.snapshot.metadata == nil)
-        let replacement = Task { await h.model.preview() }
-        await Task.yield()
-        #expect(!h.model.canDownload)
-        await h.core.releaseInvalidation()
-        await replacement.value; await eventually { h.model.canDownload }
+        let download = Task { await h.model.download() }
+        try await waitForModel { h.model.isBusy }
+        #expect(h.model.snapshot.metadata == nil && !h.model.canDownload)
+        await h.core.releaseInvalidation(); await download.value
+        let captured = try #require(await h.core.downloadedRequest)
+        #expect(captured.rawURL == (change == "url" ? "https://video.example.test/two" : "https://video.example.test/one"))
+        #expect(captured.browser == (change == "browser" ? .chrome : .brave))
+        #expect(captured.braveProfileID == (change == "browser" ? nil : change == "profile" ? "Default" : "Profile 4"))
+        // A direct call proves the old ready ID did not authorize this job.
+        #expect(await h.core.directCalls == 1)
         #expect(await h.core.lastID != old)
+        #expect(h.model.snapshot.metadata == nil)
         await h.model.shutdown()
     }
     @Test func queuedOldReadyAfterReplacementAcceptanceCannotAuthorizeNewInput() async throws {
@@ -96,7 +103,7 @@ import DownloaderCore
         for _ in 0..<40 { await Task.yield() }
         #expect(!h.model.canDownload && h.model.snapshot.phase == .previewing)
         await h.core.emit(.ready, id: newID)
-        await eventually { h.model.canDownload }
+        await eventually { h.model.snapshot.phase == .ready && h.model.snapshot.metadata != nil }
         await h.model.shutdown()
     }
     @Test func outputPreferenceDoesNotInvalidateMetadataAndActiveDownloadKeepsInput() async {
@@ -121,7 +128,7 @@ import DownloaderCore
         #expect(h.model.statusText == AppIssueClassifier.message(for: .unknown))
         #expect(!h.model.statusText.contains("unsafe"))
         h.model.revealOutput(); #expect(h.revealed.isEmpty)
-        await h.model.preview(); await eventually { h.model.canDownload }; await h.model.download()
+        await h.model.preview(); await eventually { h.model.snapshot.phase == .ready && h.model.snapshot.metadata != nil }; await h.model.download()
         let next = try #require(await h.core.lastID)
         let output = URL(fileURLWithPath: "/tmp/verified-synthetic.mp4")
         await h.core.emit(.succeeded, id: next, output: output)
@@ -176,13 +183,13 @@ import DownloaderCore
         h.model.rawURL = "https://video.example.test/synthetic"
         await h.core.rejectPreviews()
         await h.model.preview()
-        #expect(!h.model.isBusy && h.model.canPreview && !h.model.canDownload)
+        #expect(!h.model.isBusy && h.model.canPreview && h.model.canDownload && h.model.snapshot.metadata == nil)
         await h.model.shutdown()
     }
     @Test func rejectedReadyIdentityRestoresControlsInsteadOfStickingBusy() async {
         let h = Harness(); await h.readyBrave(); await h.core.rejectDownload()
         await h.model.download()
-        #expect(!h.model.isBusy && !h.model.canDownload)
+        #expect(!h.model.isBusy && h.model.canDownload && h.model.snapshot.metadata == nil)
         #expect(h.model.canPreview)
         await h.model.shutdown()
     }
@@ -197,7 +204,7 @@ import DownloaderCore
         await h.core.releaseInvalidation()
         await preview.value; await cancel.value
         #expect(await h.core.requests.count == 1)
-        #expect(!h.model.isBusy && h.model.canPreview && !h.model.canDownload)
+        #expect(!h.model.isBusy && h.model.canPreview && h.model.canDownload && h.model.snapshot.metadata == nil)
         await h.model.shutdown()
     }
     @Test func dependencyRecheckDuringDownloadCannotReplaceTheCore() async {
@@ -234,8 +241,9 @@ import DownloaderCore
         h.model.rawURL = "https://video.example.test/synthetic"; h.model.browser = .brave
         await eventually { h.model.profileIssue != nil }
         h.model.braveProfileID = "Profile 999"
-        await h.model.preview()
-        #expect(!h.model.canPreview && h.model.profileIssue == .browserAccess)
+        await h.model.preview(); await h.model.download()
+        #expect(!h.model.canPreview && !h.model.canDownload && h.model.profileIssue == .browserAccess)
+        #expect(await h.core.directCalls == 0)
         #expect(await h.core.requests.isEmpty)
         await h.model.shutdown()
     }
@@ -256,6 +264,72 @@ import DownloaderCore
         await h.model.shutdown(); await h.model.checkDependencies(); await h.model.shutdown()
         #expect(h.checks == 0 && !h.model.canPreview && !h.model.canCheckDependencies)
     }
+    @Test(arguments: [OutputPreset.mp4, .mp3])
+    func downloadWithoutPreviewCapturesExplicitInputs(preset: OutputPreset) async throws {
+        let h = Harness(); await h.model.checkDependencies()
+        h.model.rawURL = "https://video.example.test/direct"; h.model.browser = .chrome; h.model.preset = preset
+        #expect(h.model.canDownload)
+        await h.model.download()
+        #expect(await h.core.requests.isEmpty)
+        #expect(await h.core.downloadedRequest == .init(rawURL: "https://video.example.test/direct", browser: .chrome))
+        #expect(await h.core.downloadedPreset == preset)
+        #expect(h.model.isBusy && !h.model.canDownload && !h.model.canCheckDependencies)
+        await h.model.download(); await h.model.preview(); await h.model.checkDependencies()
+        #expect(await h.core.directCalls == 1 && h.checks == 1)
+        await h.model.shutdown()
+    }
+
+    @Test(arguments: ["capture", "cancel", "quit", "unsafe"])
+    func directDownloadWaitsForInvalidationWithoutChangingClickInputs(action: String) async throws {
+        let h = Harness(folderChoice: URL(fileURLWithPath: "/tmp/captured-folder"))
+        await h.readyBrave()
+        await h.core.holdInvalidation()
+        h.model.rawURL = "https://video.example.test/clicked"
+        try await h.core.invalidationEntered.wait()
+        h.model.preset = .mp3; h.model.selectDestination()
+        let download = Task { await h.model.download() }
+        try await waitForModel { h.model.isBusy }
+        #expect(!h.model.canCheckDependencies && !h.model.canDownload)
+        await h.model.download(); await h.model.preview(); await h.model.checkDependencies()
+        #expect(await h.core.directCalls == 0 && h.checks == 1)
+        var control: Task<Void, Never>?
+        if action == "capture" {
+            h.model.rawURL = "https://video.example.test/edited"; h.model.browser = .chrome; h.model.preset = .mp4
+            h.model.selectDestination()
+        } else if action == "quit" {
+            control = Task { await h.model.shutdown() }
+            try await h.core.shutdownEntered.wait()
+        } else if action == "unsafe" {
+            await h.core.emit(.failed, id: UUID(), issue: .shutdownUnconfirmed)
+            try await waitForModel { h.model.isSessionBlocked }
+        } else {
+            control = Task { await h.model.cancel() }
+            try await h.core.cancelEntered.wait()
+        }
+        await h.core.releaseInvalidation()
+        await download.value; await control?.value
+        if action == "capture" {
+            #expect(await h.core.downloadedRequest == .init(rawURL: "https://video.example.test/clicked", browser: .brave, braveProfileID: "Profile 4"))
+            #expect(await h.core.downloadedPreset == .mp3)
+            #expect(await h.core.downloadedDestination?.path == "/tmp/captured-folder")
+            #expect(h.model.isBusy)
+        } else {
+            #expect(await h.core.directCalls == 0)
+            #expect(!h.model.canDownload || action == "cancel")
+            if action == "cancel" { #expect(h.model.snapshot.phase == .cancelled && !h.model.isBusy && h.model.canDownload) }
+        }
+        await h.model.shutdown()
+    }
+
+    @Test(arguments: ["", "invalid", "file:///tmp/synthetic"])
+    func invalidDirectInputCannotReachCore(input: String) async {
+        let h = Harness(); await h.model.checkDependencies(); h.model.rawURL = input
+        await h.model.download()
+        #expect(!h.model.canDownload)
+        #expect(await h.core.directCalls == 0)
+        await h.model.shutdown()
+    }
+
 }
 
 @MainActor private func eventually(_ predicate: () async -> Bool) async {
@@ -291,7 +365,9 @@ private actor SyntheticProfiles: BraveProfileProviding {
 private actor ScriptedCore: JobCoordinating {
     let stream: AsyncStream<JobSnapshot>; let continuation: AsyncStream<JobSnapshot>.Continuation
     var requests: [PreviewRequest] = []; var lastID: UUID?; var readyID: UUID?
-    var downloadedRequest: PreviewRequest?; var downloadedPreset: OutputPreset?; var shutdownCalls = 0
+    var downloadedRequest: PreviewRequest?; var downloadedPreset: OutputPreset?; var downloadedDestination: URL?; var shutdownCalls = 0
+    var directCalls = 0
+    let invalidationEntered = ModelSignal(); let cancelEntered = ModelSignal(); let shutdownEntered = ModelSignal()
     var acceptsPreview = true
     var autoReady = true
     var shutdownIssue: AppIssue?
@@ -304,15 +380,24 @@ private actor ScriptedCore: JobCoordinating {
     }
     func invalidatePreview() async {
         readyID = nil
-        if hold { await withCheckedContinuation { waiters.append($0) } }
+        if hold {
+            await invalidationEntered.signal()
+            await withCheckedContinuation { waiters.append($0) }
+        }
     }
     func download(preset: OutputPreset, destination: URL, previewOperationID: UUID?, operationID: UUID) async -> Bool {
         guard !reject, readyID == previewOperationID else { return false }
         downloadedRequest = requests.last; downloadedPreset = preset; lastID = operationID
         emit(.downloading, id: operationID); return true
     }
-    func cancel() async { emit(.cancelled, id: lastID) }
-    func shutdown() async -> JobSnapshot { shutdownCalls += 1; continuation.finish(); return .init(operationID: nil, phase: .cancelled, metadata: nil, progress: nil, output: nil, issue: shutdownIssue, notice: nil) }
+    func download(_ request: PreviewRequest, preset: OutputPreset, destination: URL, operationID: UUID) async -> Bool {
+        directCalls += 1
+        guard !reject else { return false }
+        downloadedRequest = request; downloadedPreset = preset; downloadedDestination = destination; lastID = operationID
+        emit(.previewing, id: operationID); return true
+    }
+    func cancel() async { await cancelEntered.signal(); emit(.cancelled, id: lastID) }
+    func shutdown() async -> JobSnapshot { shutdownCalls += 1; await shutdownEntered.signal(); continuation.finish(); return .init(operationID: nil, phase: .cancelled, metadata: nil, progress: nil, output: nil, issue: shutdownIssue, notice: nil) }
     func failShutdown() { shutdownIssue = .shutdownUnconfirmed }
     func holdInvalidation() { hold = true }
     func releaseInvalidation() { hold = false; for w in waiters { w.resume() }; waiters = [] }
@@ -337,7 +422,7 @@ private actor ScriptedCore: JobCoordinating {
     func readyBrave() async {
         await model.checkDependencies(); model.rawURL = "https://video.example.test/one"; model.browser = .brave
         await eventually { self.model.braveProfiles.count == 2 }
-        model.braveProfileID = "Profile 4"; await model.preview(); await eventually { self.model.canDownload }
+        model.braveProfileID = "Profile 4"; await model.preview(); await eventually { self.model.snapshot.phase == .ready && self.model.snapshot.metadata != nil }
     }
 }
 
@@ -355,5 +440,35 @@ private actor DependencyGate {
     func release() {
         waiter?.resume(returning: .init(tools: nil, versions: [:], problems: [.init(code: "shutdown-unconfirmed", tool: "yt-dlp", path: nil)]))
         waiter = nil
+    }
+}
+
+
+private enum ModelWaitFailure: Error { case deadline }
+private actor ModelSignal {
+    private var opened = false
+    private var waiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+    func signal() { opened = true; let pending = waiters.values; waiters = [:]; for waiter in pending { waiter.resume() } }
+    func wait() async throws {
+        if opened { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters[id] = continuation
+                if Task.isCancelled { expire(id) }
+                else { Task { try? await Task.sleep(for: .seconds(5)); self.expire(id) } }
+            }
+        } onCancel: { Task { await self.expire(id) } }
+    }
+    private func expire(_ id: UUID) { waiters.removeValue(forKey: id)?.resume(throwing: ModelWaitFailure.deadline) }
+}
+
+/// Observe real model state changes rather than guessing actor scheduling order.
+@MainActor private func waitForModel(_ predicate: @escaping @MainActor () -> Bool) async throws {
+    while true {
+        let changed = ModelSignal()
+        let matched = withObservationTracking { predicate() } onChange: { Task { await changed.signal() } }
+        if matched { return }
+        try await changed.wait()
     }
 }

@@ -1,8 +1,8 @@
 # Media Downloader
 
-A personal native macOS app for previewing one video URL and saving compatible
-MP4 video or MP3 audio. Built with SwiftUI and a testable Swift 6 core, targeting
-macOS 14 or later. There are no third-party Swift package dependencies.
+A personal native macOS app for saving one recorded-video URL as compatible
+MP4 video or MP3 audio, with an optional Preview. Built with SwiftUI and a testable
+Swift 6 core, targeting macOS 14 or later. There are no third-party Swift package dependencies.
 
 ## Setup and use
 
@@ -13,16 +13,22 @@ It searches `/opt/homebrew/bin` and `/usr/local/bin`; Settings accepts absolute
 executable overrides. FFmpeg and FFprobe must retain their standard names in one
 directory. The app never installs or updates tools.
 
-Paste a single recorded-video URL, choose browser access if needed, and Preview.
+Paste a single recorded-video URL, choose MP4 or MP3, a destination and any
+explicit browser access needed, then Download. Preview is optional: Download validates single recorded-video metadata
+internally before transfer, or reuses a current matching ready preview. Preparation
+is cancellable and shows “Preparing download.” One operation owns the captured
+URL, browser/profile, preset and destination through validation and publication;
+inputs remain disabled until it finishes. Explicit retry prepares fresh metadata.
+
 Browser access defaults to None on each launch. Brave requires an explicit profile
 selection; that selection stays in memory. Browser/profile changes invalidate the
 preview. Cookie access occurs only for an explicitly selected browser when Preview
 or Download is invoked. No cookie export/import or cookie-content persistence is
 supported.
 
-Choose MP4 or MP3 and a destination, then Download. One operation runs at a time.
-Cancel stops owned subprocesses before staging cleanup. Success requires artifact
-validation and exclusive publication; Show in Finder reveals the returned file.
+One operation runs at a time. Cancel stops owned subprocesses and joins readers
+before staging cleanup, including during internal metadata preparation. Success
+requires artifact validation and exclusive publication; Show in Finder reveals the returned file.
 Only destination, output preset, and tool overrides are saved.
 
 MP4 requires source H.264 video plus AAC audio and uses merge/remux without video
@@ -53,8 +59,9 @@ and builds and verifies the local release bundle. Default verification skips the
 real-tool suite explicitly. `--integration` additionally generates synthetic
 H.264/AAC HLS media in an owned temporary directory, serves it on an ephemeral
 127.0.0.1 port, and exercises real yt-dlp/FFmpeg/FFprobe through the coordinator.
-It checks MP4/MP3 outputs, strict generic unknown-codec rejection, the Facebook/Instagram
-exception with compatible/incompatible portrait MP4s, real yt-dlp alias selection
+It checks MP4/MP3 outputs through both direct Download and explicit Preview,
+metadata-preparation failures without transfer, strict generic unknown-codec
+rejection, the Facebook/Instagram exception with compatible/incompatible portrait MP4s, real yt-dlp alias selection
 using synthetic info JSON, alias-labelled portrait downloads with actual artifact
 validation, and failures without publication.
 The integration branch first runs synthetic harness lifecycle regressions.
@@ -90,7 +97,8 @@ Automated tests and a signed local build do not establish Finder launch, GUI
 behavior, browser permissions, or live site support. Observed native GUI and user-selected public YouTube checks are recorded in
 [VERIFICATION.md](docs/VERIFICATION.md), with their limits. Login-required/browser
 cookie checks remain pending. Site availability depends on installed
-tool versions and the site.
+tool versions and the site. See [supported-site evidence and future checks](docs/SUPPORTED-SITES.md)
+for verified selected sources, pending checks, and untested extractor availability.
 
 See [the approved design](docs/superpowers/specs/2026-10-15-media-downloader-design.md)
 and [implementation plan](docs/superpowers/plans/2026-10-15-media-downloader.md).

@@ -602,3 +602,82 @@ behavior. This implementer made no external media request or browser/profile/
 cookie access. The selected TikTok source's native retry remains pending;
 loopback success does not establish live TikTok support. Existing private-source,
 GUI, macOS/architecture and distribution limits remain unchanged.
+
+
+## Direct Download without required Preview (2026-10-23)
+
+Download now starts with a valid URL, ready dependencies and any explicitly
+selected browser/profile; Preview remains optional. One core operation performs
+the existing bounded metadata extraction and single-recorded-video validation,
+then transfer, verification and exclusive publication. It reuses metadata only
+from a currently ready matching preview. Direct retries after success, failure
+or cancellation prepare fresh metadata. Preparation uses the previewing core
+phase under download ownership; presentation shows “Preparing download.” No
+intermediate ready state permits duplicate work.
+
+The model captures URL/browser/profile/preset/destination and operation identity
+before awaiting earlier preview invalidation. Disabled controls and programmatic
+edits cannot substitute new inputs. Explicit Cancel/Quit still invalidate the
+pending launch. Metadata failure, collection/live rejection, cancellation and
+unsafe shutdown prevent transfer; unsafe transfer/probe shutdown retains owned
+staging and blocks the session. No subprocess or observer polling workflow was
+added to views.
+
+Focused regression evidence:
+
+- Core RED against the new overload's initial rejection stub:
+  `bash scripts/test.sh --filter 'JobCoordinatorTests/direct'` failed five
+  functions / 19 cases with 19 issues. The direct operations did not start;
+  invalid-input cases reached their test deadlines because no terminal state
+  was emitted. The same five functions passed after implementation.
+- Model RED: `bash scripts/test.sh --filter
+  'AppModelTests/downloadWithoutPreview|AppModelTests/invalidDirectInput'`
+  failed the direct MP4/MP3 cases with ten assertions across one function;
+  the other function's three invalid-input cases already passed. Tests now
+  verify direct capture, no required Preview call, duplicate/dependency gates,
+  and explicit ephemeral browser/profile handling.
+- A separate retry-freshness RED failed one function / three cases with six
+  issues: an old retained preview tuple incorrectly skipped preparation after
+  success/failure/cancellation. Requiring current ready phase corrected it.
+- Final focused `bash scripts/test.sh --filter
+  'JobCoordinator|AppModel|AppIssueClassifier'` passed 66 functions / three
+  suites in 2.038 seconds, exit 0. Deterministic metadata-return, invalidation,
+  cancellation and shutdown barriers cover joined preparation, concurrent
+  requests, frozen inputs, stale callbacks, failure/no-staging, stale unsafe
+  shutdown blocking and unsafe transfer/probe staging retention. Existing
+  ready helpers now await actual ready metadata; Download eligibility alone
+  no longer means metadata is already ready.
+
+Final combined checks on Apple Silicon macOS 26.6.2 with Apple Swift 6.2:
+
+- `bash scripts/verify.sh --integration`: exit 0, run once after final code/test
+  changes. Its `bash scripts/test.sh` pass reported 168 functions / 16 suites in
+  11.175 seconds. Nine real-integration functions and one offline-tool readiness
+  function remain deliberate opt-in skips in that default pass. ProcessFixture,
+  release bundle assembly and local ad-hoc signature verification passed.
+- Ten Python harness lifecycle regressions passed in 10.126 seconds. Separately
+  enabled real loopback integration passed nine functions / 62 parameter cases
+  in 22.657 seconds, including both direct Download and explicit Preview for
+  MP4/MP3 success and 404/non-media preparation failures. Each success re-verifies
+  the actual published path with real FFprobe and checks destination contents;
+  failures have no published output or leftover staging. The Task 1 selector
+  and actual-artifact cases remain enabled and passing.
+- `swift build --product MediaDownloader`: exit 0, native product built in
+  2.60 seconds, no warnings/errors. `git diff --check`: passed.
+- Tools reported by integration: yt-dlp 2026.08.19, FFmpeg/FFprobe 9.0.2,
+  Deno 2.9.7. No installs or updates occurred.
+
+The initial sandboxed focused invocation could not write compiler caches and
+produced the known cascading SwiftShims/SDK diagnostic. It was interrupted and
+rerun with normal compiler-cache/process permission; the identical focused
+command then reached the intended functional RED. All required final checks
+used approved compiler-cache, owned-process and loopback permissions. There
+was no remaining permission failure in those checks.
+
+These are synthetic core/model and real loopback results. This implementer made
+no external media request, actual browser/profile/cookie access or native GUI
+check, and did not replace the installed app. Only the normal dist bundle was
+rebuilt. Independent controller review and the selected TikTok source's direct
+native Download/Finder/FFprobe retry remain pending at this handoff. Existing
+private-source, browser-permission, other GUI/platform and distribution limits
+remain distinct. See [site evidence and future checks](SUPPORTED-SITES.md).

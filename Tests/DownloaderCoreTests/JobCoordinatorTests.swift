@@ -629,3 +629,171 @@ private func withDescendantFixture(
     let final = await coordinator.shutdown()
     if final.issue != .shutdownUnconfirmed { try FileManager.default.removeItem(at: destination) }
 }
+
+
+extension JobCoordinatorTests {
+    @Test(arguments: [OutputPreset.mp4, .mp3])
+    func directDownloadPreparesThenPublishesWithOneIdentity(preset: OutputPreset) async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        let id = UUID()
+        let request = PreviewRequest(rawURL: CoordinatorHarness.request.rawURL, browser: .brave, braveProfileID: "Profile 4")
+        try #require(await h.coordinator.download(request, preset: preset, destination: h.destination, operationID: id))
+        let preparation = try await h.runner.waitForCommand(at: 0)
+        #expect(preparation.arguments.contains("--dump-single-json"))
+        #expect(try await h.waitForPhase(.previewing).operationID == id)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: h.destination.path).isEmpty)
+        // A complete metadata line does not authorize transfer before runner return.
+        await h.runner.emit(.init(stream: .stdout, bytes: try TestSupport.fixture("single-video")), at: 0)
+        #expect(await h.runner.commands().count == 1)
+        #expect(!(await h.coordinator.download(request, preset: .mp4, destination: h.destination, operationID: UUID())))
+        #expect(!(await h.coordinator.preview(request)))
+        await h.runner.resume(.init(), at: 0)
+        let command = try await h.runner.waitForCommand(at: 1)
+        #expect(command.arguments.last == request.rawURL)
+        #expect(command.arguments.contains("brave:Profile 4"))
+        #expect(preparation.arguments.contains("brave:Profile 4"))
+        #expect(try await h.waitForPhase(.downloading).operationID == id)
+        await h.runner.resume(.init(lines: [try h.finalPathLine(for: command, preset: preset)]), at: 1)
+        _ = try await h.runner.waitForCommand(at: 2)
+        await h.runner.resume(.init(lines: [.init(stream: .stdout, bytes: try TestSupport.fixture(preset == .mp4 ? "probe-h264-aac" : "probe-mp3"))]), at: 2)
+        let result = try await h.waitForTerminal()
+        #expect(result.phase == .succeeded && result.operationID == id)
+        #expect(result.output?.pathExtension == preset.rawValue)
+        #expect(try h.completedFiles().count == 1)
+    }
+
+    @Test(arguments: ["matching", "url", "browser", "profile"])
+    func directDownloadReusesOnlyMatchingReadyRequest(change: String) async throws {
+        let original = PreviewRequest(rawURL: CoordinatorHarness.request.rawURL, browser: .brave, braveProfileID: "Profile 4")
+        let h = try await CoordinatorHarness.readyVideo(request: original); defer { h.remove() }
+        let request = PreviewRequest(rawURL: change == "url" ? "https://video.example.test/new" : original.rawURL,
+                                     browser: change == "browser" ? .chrome : .brave,
+                                     braveProfileID: change == "profile" ? "Default" : "Profile 4")
+        try #require(await h.coordinator.download(request, preset: .mp4, destination: h.destination, operationID: UUID()))
+        let command = try await h.runner.waitForCommand(at: 1)
+        #expect(command.arguments.contains("--dump-single-json") == (change != "matching"))
+        #expect(command.arguments.last == request.rawURL)
+        if change != "matching" { #expect(try await h.waitForPhase(.previewing).metadata == nil) }
+        await h.coordinator.cancel()
+    }
+
+    @Test(arguments: ["", "not a URL", "file:///tmp/synthetic", "brave"])
+    func directDownloadInvalidInputNeverLaunches(input: String) async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        let request = PreviewRequest(rawURL: input == "brave" ? CoordinatorHarness.request.rawURL : input,
+                                     browser: input == "brave" ? .brave : .none)
+        _ = await h.coordinator.download(request, preset: .mp4, destination: h.destination, operationID: UUID())
+        let result = try await h.waitForTerminal()
+        #expect(result.phase == .failed && result.issue == (input == "brave" ? .profileRequired : .invalidURL))
+        #expect(await h.runner.commands().isEmpty)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: h.destination.path).isEmpty)
+    }
+
+    @Test(arguments: ["malformed", "collection", "live", "exit", "timeout", "unsafe"])
+    func directPreparationFailureNeverTransfersOrStages(failure: String) async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        try #require(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID()))
+        _ = try await h.runner.waitForCommand(at: 0)
+        let reply: ScriptedReply
+        let issue: AppIssue
+        switch failure {
+        case "collection": reply = .init(lines: [.init(stream: .stdout, bytes: try TestSupport.fixture("collection"))]); issue = .collection
+        case "live": reply = .init(#"{"id":"test","title":"synthetic","is_live":true}"#); issue = .unsupported
+        case "exit": reply = .init("synthetic diagnostic", exitCode: 1, stream: .stderr); issue = .unknown
+        case "timeout": reply = .init(failure: .timeout); issue = .timeout
+        case "unsafe": reply = .init(failure: .shutdownUnconfirmed(13)); issue = .shutdownUnconfirmed
+        default: reply = .init("{broken"); issue = .unknown
+        }
+        await h.runner.resume(reply, at: 0)
+        let result = try await h.waitForTerminal()
+        #expect(result.phase == .failed && result.issue == issue && result.output == nil)
+        #expect(await h.runner.commands().count == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: h.destination.path).isEmpty)
+        if failure == "unsafe" {
+            #expect(!(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID())))
+            await h.coordinator.invalidatePreview()
+            #expect(try await h.waitForTerminal() == result)
+        }
+    }
+
+    @Test(arguments: ["cancel", "quit", "unsafe"])
+    func directPreparationCancellationJoinsMetadataAndCannotTransfer(action: String) async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        await h.runner.holdCancellation(at: 0)
+        try #require(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID()))
+        _ = try await h.runner.waitForCommand(at: 0)
+        let control = Task { if action == "quit" { _ = await h.coordinator.shutdown() } else { await h.coordinator.cancel() } }
+        try await h.runner.waitForCancellation(at: 0)
+        #expect(try await h.waitForPhase(.cancelling).output == nil)
+        #expect(!(await h.coordinator.download(CoordinatorHarness.request, preset: .mp3, destination: h.destination, operationID: UUID())))
+        #expect(await h.runner.commands().count == 1)
+        await h.runner.resume(action == "unsafe" ? .init(failure: .shutdownUnconfirmed(13)) : .init(#"{"id":"stale","title":"stale"}"#), at: 0)
+        await control.value
+        let result = try await h.waitForTerminal()
+        #expect(result.phase == (action == "unsafe" ? .failed : .cancelled))
+        #expect(result.issue == (action == "unsafe" ? .shutdownUnconfirmed : nil))
+        #expect(result.metadata == nil && result.output == nil)
+        #expect(await h.runner.commands().count == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: h.destination.path).isEmpty)
+    }
+}
+
+
+extension JobCoordinatorTests {
+    @Test(arguments: ["succeeded", "failed", "cancelled"])
+    func directRetryPreparesFreshMetadataAfterEarlierReadyTerminal(terminal: String) async throws {
+        let h = try await CoordinatorHarness.readyVideo(); defer { h.remove() }
+        if terminal == "succeeded" { _ = try await h.finishDownload() }
+        else {
+            await h.coordinator.download(preset: .mp4, destination: h.destination)
+            _ = try await h.runner.waitForCommand(at: 1)
+            if terminal == "cancelled" { await h.coordinator.cancel() }
+            else { await h.runner.resume(.init(failure: .timeout), at: 1) }
+            _ = try await h.waitForTerminal()
+        }
+        let next = await h.runner.commands().count
+        try #require(await h.coordinator.download(CoordinatorHarness.request, preset: .mp3, destination: h.destination, operationID: UUID()))
+        let command = try await h.runner.waitForCommand(at: next)
+        #expect(command.arguments.contains("--dump-single-json"))
+        #expect(try await h.waitForPhase(.previewing).metadata == nil)
+        await h.coordinator.cancel()
+    }
+}
+
+
+extension JobCoordinatorTests {
+    @Test func staleUnsafePreviewInvalidationBlocksDirectDownload() async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        await h.runner.holdCancellation(at: 0)
+        await h.coordinator.preview(CoordinatorHarness.request)
+        _ = try await h.runner.waitForCommand(at: 0)
+        let invalidating = Task { await h.coordinator.invalidatePreview() }
+        try await h.runner.waitForCancellation(at: 0)
+        #expect(!(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID())))
+        await h.runner.resume(.init(failure: .shutdownUnconfirmed(13)), at: 0)
+        await invalidating.value
+        #expect(try await h.waitForTerminal().issue == .shutdownUnconfirmed)
+        #expect(!(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID())))
+        #expect(await h.runner.commands().count == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: h.destination.path).isEmpty)
+    }
+
+    @Test(arguments: [1, 2])
+    func directDownloadUnsafeTransferOrProbeRetainsStaging(origin: Int) async throws {
+        let h = try CoordinatorHarness(); defer { h.remove() }
+        try #require(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID()))
+        _ = try await h.runner.waitForCommand(at: 0)
+        await h.runner.resume(.init(lines: [.init(stream: .stdout, bytes: try TestSupport.fixture("single-video"))]), at: 0)
+        let media = try await h.runner.waitForCommand(at: 1)
+        let candidate = try h.candidate(for: media)
+        if origin == 2 { await h.runner.resume(.init(lines: [try h.finalPathLine(for: media)]), at: 1) }
+        _ = try await h.runner.waitForCommand(at: origin)
+        await h.runner.resume(.init(failure: .shutdownUnconfirmed(13)), at: origin)
+        let failed = try await h.waitForTerminal()
+        #expect(failed.issue == .shutdownUnconfirmed && failed.output == nil && failed.notice != nil)
+        #expect(FileManager.default.fileExists(atPath: candidate.deletingLastPathComponent().path))
+        #expect(try h.completedFiles().isEmpty)
+        #expect(!(await h.coordinator.download(CoordinatorHarness.request, preset: .mp4, destination: h.destination, operationID: UUID())))
+        #expect(await h.runner.commands().count == origin + 1)
+    }
+}
