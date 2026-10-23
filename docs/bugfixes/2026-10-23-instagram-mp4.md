@@ -64,3 +64,24 @@ review and decision in tracked docs, then remove only this task's scratch worksp
 
 Sources: [upstream Instagram extraction](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/instagram.py)
 and [format filter semantics](https://github.com/yt-dlp/yt-dlp#filtering-formats).
+
+## Implemented and live result
+
+Implementation: `a36d25c`. Genuine selector and real-loopback RED/GREEN preceded
+the minimal parsed-host condition change. Final combined verification passed 154
+reported Swift tests across 16 suites (seven explicit opt-in functions skipped
+in the default phase), ten Python lifecycle tests, six real integration functions
+with fourteen cases, release/ad-hoc signature and native build. Actual versions
+and verification limits are recorded in VERIFICATION.md.
+
+The controller relaunched the rebuilt native app, which reset browser choice to
+None, then restored the same failing source and the user's prior explicit Brave
+profile selection. Preview and MP4 download succeeded. Show in Finder selected
+the published file in Downloads. Independent FFprobe on that exact path confirmed
+MP4-family container, 720×1280 H.264 video and AAC audio, 23.727937 seconds,
+20,026,153 bytes. No transcoding or runtime-tool update was used. Only this
+cookie-enabled selected source is verified; whether it strictly requires login
+and support for other/private-only sources remain unestablished. Actual source,
+title and browser/profile identifiers are omitted from repository evidence.
+
+Independent [scoped review](../reviews/2026-10-23-instagram-mp4-review.md) approved spec compliance, task quality and the complete bugfix range with no findings. The controller closed its live retry item above. Work remains local on the existing development branch; no remote or distribution change was made.

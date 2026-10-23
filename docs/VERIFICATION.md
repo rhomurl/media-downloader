@@ -530,3 +530,23 @@ access, or live GUI checks. Controller review and the selected-source native ret
 remain pending at this handoff; no live Instagram support claim follows from
 loopback success. Earlier live observations and their limitations remain recorded
 in their original sections above.
+
+### Controller live retry closure
+
+After the implementation handoff above, the rebuilt native app reset browser
+choice to None on launch. The controller restored the same failing Instagram
+source and the user's previously explicit Brave profile choice. Native preview
+and MP4 download completed. Show in Finder selected the actual published file
+in Downloads. Independent FFprobe at that exact path confirmed MP4-family
+container, 720×1280 H.264 video plus AAC audio, 23.727937 seconds, 20,026,153 bytes.
+This closes the selected-source retry item; independent review is recorded
+separately in the scoped review document when complete.
+
+No video transcoding, tool installs/updates, browser-profile persistence or new
+permissions were involved. Live source/title/profile identifiers, raw metadata,
+diagnostics and cookies are not recorded here. This verifies this selected
+cookie-enabled Instagram reel; it does not establish that login was strictly
+required or that other/private-only sources will work. Synthetic integration and
+prior manual-platform limits remain distinct.
+
+Independent [scoped review](reviews/2026-10-23-instagram-mp4-review.md) approved spec compliance and quality with no findings. Its pending native retry item is closed by the controller evidence above; inherited baseline safety limits remain explicit.
